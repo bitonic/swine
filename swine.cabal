@@ -1,0 +1,40 @@
+name:                swine
+version:             0.1.0.0
+-- synopsis:
+-- description:
+homepage:            https://github.com/bitonic/swine#readme
+license:             BSD3
+license-file:        LICENSE
+author:              Francesco Mazzoli
+maintainer:          f@mazzo.li
+copyright:           Francesco Mazzoli 2017
+category:            Web
+build-type:          Simple
+cabal-version:       >=1.10
+extra-source-files:  README.md
+
+library
+  hs-source-dirs: src
+  exposed-modules:
+    Swine
+    Swine.Exp
+    Swine.Prelude
+    Swine.LookupList
+  default-language: Haskell2010
+  build-depends:
+    base >= 4.7 && < 5,
+    parsers,
+    trifecta,
+    ansi-wl-pprint,
+    text,
+    unordered-containers
+  default-extensions:
+    StrictData
+    NoImplicitPrelude
+    KindSignatures
+    DataKinds
+    TypeFamilies
+    ExistentialQuantification
+    GADTs
+    LambdaCase
+  ghc-options: -Wall

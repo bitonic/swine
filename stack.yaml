@@ -1,0 +1,10 @@
+resolver: lts-8.11
+packages:
+- '.'
+- location:
+    git: https://github.com/ekmett/bound.git
+    commit: 742d511091300f203a9f0e1b22ce02e30de55dc9
+  extra-dep: true
+extra-deps: []
+flags: {}
+extra-package-dbs: []
