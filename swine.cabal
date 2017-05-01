@@ -28,7 +28,9 @@ library
     ansi-wl-pprint,
     text,
     unordered-containers,
-    template-haskell
+    template-haskell,
+    charset,
+    mtl
   default-extensions:
     StrictData
     NoImplicitPrelude
@@ -41,4 +43,5 @@ library
     ScopedTypeVariables
     PatternSynonyms
     RankNTypes
+    ConstraintKinds
   ghc-options: -Wall

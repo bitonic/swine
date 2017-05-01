@@ -25,6 +25,9 @@ var h = HNF (Neutral h [])
 var_ :: a -> HNF a
 var_ h = Neutral h []
 
+lam :: Binder -> Exp (Var a) -> Exp a
+lam v body = HNF (Lam v body)
+
 data HNF a
   = Neutral a [Exp a]
   | Lam Binder (Exp (Var a))
@@ -32,6 +35,7 @@ data HNF a
 data Exp a where
   HNF :: HNF a -> Exp a
   App :: Exp a -> Exp a -> Exp a
+  Let :: Binder -> Exp a -> Exp (Var a) -> Exp a
   Susp :: Env b a -> Exp b -> Exp a
 
 -- Environment
@@ -123,6 +127,7 @@ eval = \case
     case fun of
       Neutral h args -> return (Neutral h (args <> [arg]))
       Lam v body -> evalSusp (envCons v arg envNil) body
+  Let v e1 e2 -> evalSusp (envCons v e1 envNil) e2
   Susp env e -> evalSusp env e
 
 evalSusp :: Env from to -> Exp from -> Either Text (HNF to)
@@ -131,4 +136,5 @@ evalSusp env = \case
     Neutral h args -> eval (foldl' App (envLookup env h) (map (Susp env) args))
     Lam v body -> return (Lam v (Susp (envLam v env) body))
   App fun arg -> eval (App (Susp env fun) (Susp env arg))
+  Let v e1 e2 -> eval (Let v (Susp env e1) (Susp (envLam v env) e2))
   Susp env' e -> evalSusp (envComp env' env) e
