@@ -27,7 +27,8 @@ library
     trifecta,
     ansi-wl-pprint,
     text,
-    unordered-containers
+    unordered-containers,
+    template-haskell
   default-extensions:
     StrictData
     NoImplicitPrelude
@@ -37,4 +38,7 @@ library
     ExistentialQuantification
     GADTs
     LambdaCase
+    ScopedTypeVariables
+    PatternSynonyms
+    RankNTypes
   ghc-options: -Wall

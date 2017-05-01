@@ -1,6 +1,3 @@
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE RankNTypes #-}
 module Swine.Exp where
 
 import           Swine.Prelude
@@ -93,10 +90,14 @@ evalEnv = \case
 
     goWeaken :: Env a b -> Weaken b c -> NormalEnv a c
     goWeaken env0 wk = case env0 of
-      ENormal (ENil wk') -> ENil (compWeaken wk' wk)
-      ENormal (ECons v e env) -> ECons v (Susp (ENormal (ENil wk)) e) (EWeaken env wk)
+      ENormal env -> goWeakenNormal env wk
       EComp env1 env2 -> goComp (evalEnv env1) (EWeaken env2 wk)
       EWeaken env wk' -> goWeaken env (compWeaken wk' wk)
+
+    goWeakenNormal :: NormalEnv a b -> Weaken b c -> NormalEnv a c
+    goWeakenNormal env0 wk = case env0 of
+      ENil wk' -> ENil (compWeaken wk' wk)
+      ECons v e env -> ECons v (Susp (ENormal (ENil wk)) e) (EWeaken env wk)
 
     goCompWeaken :: Weaken a b -> Env b c -> NormalEnv a c
     goCompWeaken wk = \case
@@ -105,7 +106,7 @@ evalEnv = \case
         WNil -> ECons v e env
         WWeaken wk' -> goCompWeaken wk' env
       EComp env1 env2 -> goComp (goCompWeaken wk env1) env2
-      EWeaken env wk' -> goWeaken (ENormal (goCompWeaken wk env)) wk' -- TODO can we do this more lazily?
+      EWeaken env wk' -> goWeakenNormal (goCompWeaken wk env) wk' -- TODO can we do this more lazily?
 
     compWeaken :: Weaken a b -> Weaken b c -> Weaken a c
     compWeaken wk1 WNil = wk1
