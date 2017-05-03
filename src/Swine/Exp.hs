@@ -161,20 +161,33 @@ eval = \case
     fun <- eval fun0
     case fun of
       Neutral h args -> return (Neutral h (args :> arg))
-      Canonical (Lam v body) -> evalSusp (envCons v arg envNil) body
+      Canonical (Lam v body) -> eval (removeSusp (envCons v arg envNil) body)
       Canonical p@(Prim _) -> Left (EEBadApp p arg)
-  Let v e1 e2 -> evalSusp (envCons v e1 envNil) e2
-  Susp env e -> evalSusp env e
+  Let v e1 e2 -> eval (removeSusp (envCons v e1 envNil) e2)
+  Susp env e -> eval (removeSusp env e)
 
-evalSusp :: Env from to -> Exp from -> Either EvalError (Evaluated to)
-evalSusp env = \case
+-- Removes all suspensions
+removeAllSusps :: Exp a -> Either EvalError (Exp a)
+removeAllSusps = \case
+  Evaluated (Neutral h args) -> Evaluated . Neutral h <$> mapM removeAllSusps args
+  Evaluated (Canonical (Lam pat body)) ->
+    Evaluated . Canonical . Lam pat <$> removeAllSusps body
+  Evaluated (Canonical (Prim p)) -> return (Evaluated (Canonical (Prim p)))
+  App fun arg -> App <$> removeAllSusps fun <*> removeAllSusps arg
+  Let pat e1 e2 -> Let pat <$> removeAllSusps e1 <*> removeAllSusps e2
+  Susp env e -> removeAllSusps (removeSusp env e)
+
+-- Pushes the Susp down into the expression, then does something
+-- to the leaves
+removeSusp :: Env from to -> Exp from -> Exp to
+removeSusp env = \case
   Evaluated e0 -> case e0 of
-    Neutral h args -> eval (foldl' App (envLookup env h) (map (Susp env) args))
-    Canonical (Lam v body) -> return (Canonical (Lam v (Susp (envLam v env) body)))
-    Canonical (Prim p) -> return (Canonical (Prim p))
-  App fun arg -> eval (App (Susp env fun) (Susp env arg))
-  Let v e1 e2 -> eval (Let v (Susp env e1) (Susp (envLam v env) e2))
-  Susp env' e -> evalSusp (envComp env' env) e
+    Neutral h args -> foldl' App (envLookup env h) (map (Susp env) args)
+    Canonical (Lam v body) -> Evaluated (Canonical (Lam v (Susp (envLam v env) body)))
+    Canonical (Prim p) -> Evaluated (Canonical (Prim p))
+  App fun arg -> App (Susp env fun) (Susp env arg)
+  Let v e1 e2 -> Let v (Susp env e1) (Susp (envLam v env) e2)
+  Susp env' e -> removeSusp (envComp env' env) e
 
 -- Instances
 -----------------------------------------------------------------------

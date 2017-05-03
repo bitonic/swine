@@ -30,7 +30,6 @@ run = Haskeline.runInputT
           case mbExp of
             Left err -> do
               outputDoc ("Error while parsing" P.<#> err)
-              loop
             Right exp0 -> do
               outputDoc $
                 "Parsed expression:" P.<#>
@@ -38,9 +37,15 @@ run = Haskeline.runInputT
               case E.eval exp0 of
                 Left _err -> do
                   outputDoc "Error while evaluating"
-                  loop
                 Right exp -> do
                   outputDoc $
                     "Evaluated expression:" P.<#>
                     P.indent (EPr.prettyExp (EPr.newVarNames absurd) (E.Evaluated exp))
-                  loop
+                  case E.removeAllSusps (E.Evaluated exp) of
+                    Left _err -> do
+                      outputDoc "Error while removing all suspensions"
+                    Right exp' -> do
+                      outputDoc $
+                        "Evaluated expression without suspensions:" P.<#>
+                        P.indent (EPr.prettyExp (EPr.newVarNames absurd) exp')
+          loop
