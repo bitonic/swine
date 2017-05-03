@@ -17,9 +17,14 @@ library
   hs-source-dirs: src
   exposed-modules:
     Swine
+    Swine.Pretty
     Swine.Exp
+    Swine.Exp.Pretty
+    Swine.Exp.Parser
     Swine.Prelude
     Swine.LookupList
+    Swine.List
+    Swine.Orphans
   default-language: Haskell2010
   build-depends:
     base >= 4.7 && < 5,
@@ -30,7 +35,11 @@ library
     unordered-containers,
     template-haskell,
     charset,
-    mtl
+    mtl,
+    hashable,
+    bytestring,
+    filepath,
+    haskeline
   default-extensions:
     StrictData
     NoImplicitPrelude
@@ -44,4 +53,11 @@ library
     PatternSynonyms
     RankNTypes
     ConstraintKinds
-  ghc-options: -Wall
+    StandaloneDeriving
+    OverloadedStrings
+    DeriveFunctor
+    DeriveFoldable
+    DeriveTraversable
+    DeriveGeneric
+    GeneralizedNewtypeDeriving
+  ghc-options: -Wall -funbox-small-strict-fields

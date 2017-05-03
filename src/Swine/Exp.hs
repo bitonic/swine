@@ -7,8 +7,15 @@ import           Swine.Prelude
 
 newtype Binder = Binder Text
 
-instance Eq Binder where
-  _ == _ = True
+data Pattern
+  = PatBind Binder
+  | PatIgnore Binder -- Without the _
+
+-- Useful when we need generated names
+patBinder :: Pattern -> Binder
+patBinder = \case
+  PatBind v -> v
+  PatIgnore (Binder s) -> Binder ("ign_" <> s)
 
 data Var a
   = B Binder
@@ -16,125 +23,168 @@ data Var a
 
 type Label = Text
 
+type IsVar a = (Eq a, Hashable a)
+
 -- Expressions
 -----------------------------------------------------------------------
 
+-- TODO do the primops as an eliminator storing the already evaluated
+-- canonicals and the to-evaluate expressions in the eliminator.
+
 var :: a -> Exp a
-var h = HNF (Neutral h [])
+var h = Evaluated (Neutral h mempty)
 
-var_ :: a -> HNF a
-var_ h = Neutral h []
+lam :: Pattern -> Exp (Var a) -> Exp a
+lam v body = Evaluated (Canonical (Lam v body))
 
-lam :: Binder -> Exp (Var a) -> Exp a
-lam v body = HNF (Lam v body)
+prim :: Prim -> Exp a
+prim p = Evaluated (Canonical (Prim p))
 
-data HNF a
-  = Neutral a [Exp a]
-  | Lam Binder (Exp (Var a))
+data Prim
+  = PrimInt64 Int64
+  deriving (Eq, Ord, Show, Read)
+
+data Canonical a
+  = Prim Prim
+  | Lam Pattern (Exp (Var a))
+
+data Evaluated a = Canonical (Canonical a) | Neutral a (Bwd (Exp a))
 
 data Exp a where
-  HNF :: HNF a -> Exp a
+  Evaluated :: Evaluated a -> Exp a
+  -- Yet to be evaluated
   App :: Exp a -> Exp a -> Exp a
-  Let :: Binder -> Exp a -> Exp (Var a) -> Exp a
+  Let :: Pattern -> Exp a -> Exp (Var a) -> Exp a
   Susp :: Env b a -> Exp b -> Exp a
+  -- TODO it would be good to constraint this to a non-nil susp
 
 -- Environment
 -----------------------------------------------------------------------
 
 data Weaken from to where
-  WNil :: Weaken a a
-  WWeaken :: Weaken from to -> Weaken from (Var to)
+  WeakenZero :: Weaken a a
+  WeakenSucc :: Weaken from to -> Weaken from (Var to)
 
 data NormalEnv from to where
-  ENil :: Weaken from to -> NormalEnv from to
-  ECons :: Binder -> Exp to -> Env from to -> NormalEnv (Var from) to
+  EnvNil :: Weaken from to -> NormalEnv from to
+  -- ^ Possibly weakens an expression
+  EnvCons :: Pattern -> Exp to -> Env from to -> NormalEnv (Var from) to
+  -- ^ Adds a variable to an environment
 
 data Env from to where
-  ENormal :: NormalEnv from to -> Env from to
-  EComp :: Env a b -> Env b c -> Env a c
-  EWeaken :: Env a b -> Weaken b c -> Env a c
+  EnvNormal :: NormalEnv from to -> Env from to
+  EnvComp :: Env a b -> Env b c -> Env a c
+  -- ^ Composes two environments together
+  EnvWeaken :: Env a b -> Weaken b (Var c) -> Env a (Var c)
+  -- ^
+  -- Weakens the expression after applying the given environment.
+  --
+  -- We want at least one weakening here, otherwise this should
+  -- disappear.
 
 -- API
 
 envNil :: Env a a
-envNil = ENormal (ENil WNil)
+envNil = EnvNormal (EnvNil WeakenZero)
 
-envCons :: Binder -> Exp to -> Env from to -> Env (Var from) to
-envCons v e env = ENormal (ECons v e env)
+envCons :: Pattern -> Exp to -> Env from to -> Env (Var from) to
+envCons v e env = EnvNormal (EnvCons v e env)
 
 envLookup :: Env from to -> from -> Exp to
 envLookup env0 v = case evalEnv env0 of
-  ENil wk -> var (goWeaken wk v) -- TODO I don't know if this makes sense, test for this specifically
-  ECons _b e env -> case v of
+  EnvNil wk -> var (goWeaken wk v) -- TODO I don't know if this makes sense, test for this specifically
+  EnvCons _b e env -> case v of
     B _b -> e
     F v' -> envLookup env v'
   where
     goWeaken :: Weaken from to -> from -> to
     goWeaken wk0 v' = case wk0 of
-      WNil -> v'
-      WWeaken wk -> F (goWeaken wk v')
+      WeakenZero -> v'
+      WeakenSucc wk -> F (goWeaken wk v')
 
-envLam :: Binder -> Env from to -> Env (Var from) (Var to)
-envLam v env = envCons v (var (B v)) (EWeaken env (WWeaken WNil))
+envLam :: Pattern -> Env from to -> Env (Var from) (Var to)
+envLam v env = envCons v (var (B (patBinder v))) (EnvWeaken env (WeakenSucc WeakenZero))
 
 envComp :: Env a b -> Env b c -> Env a c
-envComp = EComp
+envComp = EnvComp
 
 -- env "normalization"
 
 evalEnv :: Env from to -> NormalEnv from to
 evalEnv = \case
-  ENormal env -> env
-  EComp env1 env2 -> goComp (evalEnv env1) env2
-  EWeaken env wk -> goWeaken env wk
+  EnvNormal env -> env
+  EnvComp env1 env2 -> goComp (evalEnv env1) env2
+  EnvWeaken env wk -> goWeaken env wk
   where
     goComp :: NormalEnv a b -> Env b c -> NormalEnv a c
-    goComp (ENil wk) env2 = goCompWeaken wk env2
-    goComp (ECons v1 e1 env1) env2 = ECons v1 (Susp env2 e1) (EComp env1 env2)
+    goComp (EnvNil wk) env2 = goCompWeaken wk env2
+    goComp (EnvCons v1 e1 env1) env2 = EnvCons v1 (Susp env2 e1) (EnvComp env1 env2)
 
     goWeaken :: Env a b -> Weaken b c -> NormalEnv a c
-    goWeaken env0 wk = case env0 of
-      ENormal env -> goWeakenNormal env wk
-      EComp env1 env2 -> goComp (evalEnv env1) (EWeaken env2 wk)
-      EWeaken env wk' -> goWeaken env (compWeaken wk' wk)
+    goWeaken env0 = \case
+      WeakenZero -> evalEnv env0
+      wk@(WeakenSucc _) -> case env0 of
+        EnvNormal env -> goWeakenNormal env wk
+        EnvComp env1 env2 -> goComp (evalEnv env1) (EnvWeaken env2 wk)
+        EnvWeaken env wk' -> goWeaken env (compWeaken wk' wk)
 
     goWeakenNormal :: NormalEnv a b -> Weaken b c -> NormalEnv a c
     goWeakenNormal env0 wk = case env0 of
-      ENil wk' -> ENil (compWeaken wk' wk)
-      ECons v e env -> ECons v (Susp (ENormal (ENil wk)) e) (EWeaken env wk)
+      EnvNil wk' -> EnvNil (compWeaken wk' wk)
+      EnvCons v e env -> EnvCons v (Susp (EnvNormal (EnvNil wk)) e) $ case wk of
+        WeakenZero -> env
+        WeakenSucc _ -> EnvWeaken env wk
 
     goCompWeaken :: Weaken a b -> Env b c -> NormalEnv a c
     goCompWeaken wk = \case
-      ENormal (ENil wk') -> ENil (compWeaken wk wk')
-      ENormal (ECons v e env) -> case wk of
-        WNil -> ECons v e env
-        WWeaken wk' -> goCompWeaken wk' env
-      EComp env1 env2 -> goComp (goCompWeaken wk env1) env2
-      EWeaken env wk' -> goWeakenNormal (goCompWeaken wk env) wk' -- TODO can we do this more lazily?
+      EnvNormal (EnvNil wk') -> EnvNil (compWeaken wk wk')
+      EnvNormal (EnvCons v e env) -> case wk of
+        WeakenZero -> EnvCons v e env
+        WeakenSucc wk' -> goCompWeaken wk' env
+      EnvComp env1 env2 -> goComp (goCompWeaken wk env1) env2
+      EnvWeaken env wk' -> goWeakenNormal (goCompWeaken wk env) wk' -- TODO can we do this more lazily?
 
     compWeaken :: Weaken a b -> Weaken b c -> Weaken a c
-    compWeaken wk1 WNil = wk1
-    compWeaken wk1 (WWeaken wk2) = WWeaken (compWeaken wk1 wk2)
+    compWeaken wk1 WeakenZero = wk1
+    compWeaken wk1 (WeakenSucc wk2) = WeakenSucc (compWeaken wk1 wk2)
 
 -- Evaluation
 -----------------------------------------------------------------------
 
-eval :: Exp a -> Either Text (HNF a)
+data EvalError
+  = forall a. EEBadApp (Canonical a) (Exp a)
+
+eval :: Exp a -> Either EvalError (Evaluated a)
 eval = \case
-  HNF n -> return n
+  Evaluated n -> return n
   App fun0 arg -> do
     fun <- eval fun0
     case fun of
-      Neutral h args -> return (Neutral h (args <> [arg]))
-      Lam v body -> evalSusp (envCons v arg envNil) body
+      Neutral h args -> return (Neutral h (args :> arg))
+      Canonical (Lam v body) -> evalSusp (envCons v arg envNil) body
+      Canonical p@(Prim _) -> Left (EEBadApp p arg)
   Let v e1 e2 -> evalSusp (envCons v e1 envNil) e2
   Susp env e -> evalSusp env e
 
-evalSusp :: Env from to -> Exp from -> Either Text (HNF to)
+evalSusp :: Env from to -> Exp from -> Either EvalError (Evaluated to)
 evalSusp env = \case
-  HNF e0 -> case e0 of
+  Evaluated e0 -> case e0 of
     Neutral h args -> eval (foldl' App (envLookup env h) (map (Susp env) args))
-    Lam v body -> return (Lam v (Susp (envLam v env) body))
+    Canonical (Lam v body) -> return (Canonical (Lam v (Susp (envLam v env) body)))
+    Canonical (Prim p) -> return (Canonical (Prim p))
   App fun arg -> eval (App (Susp env fun) (Susp env arg))
   Let v e1 e2 -> eval (Let v (Susp env e1) (Susp (envLam v env) e2))
   Susp env' e -> evalSusp (envComp env' env) e
+
+-- Instances
+-----------------------------------------------------------------------
+
+deriving instance (Eq a) => Eq (Var a)
+deriving instance Generic (Var a)
+instance (Hashable a) => Hashable (Var a)
+
+instance Eq Binder where
+  _ == _ = True
+instance Hashable Binder where
+  hashWithSalt s _ = hashWithSalt s ()
+
