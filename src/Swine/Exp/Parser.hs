@@ -22,10 +22,12 @@ import qualified Text.Trifecta.Delta as Trifecta
 import           Swine.Prelude
 import qualified Swine.Exp as E
 import qualified Swine.Pretty as P
+import qualified Swine.LookupList as LL
 
 data ParseError
   = PEOutOfScope
       Text -- What we looked for
+  | forall a. PEDuplicatedLabelInRecord [(E.Label, E.Exp a)]
 
 class (TokenParsing m, Monad m) => SwineParsing m where
   throwParseError :: ParseError -> m a
@@ -37,6 +39,7 @@ newtype SwineParseMonad a = SwineParseMonad
 instance P.Pretty ParseError where
   pretty = \case
     PEOutOfScope txt -> "Out of scope identifier" P.<+> P.text txt
+    PEDuplicatedLabelInRecord _flds -> "Duplicated record labels TODO improve error message"
 
 instance SwineParsing SwineParseMonad where
   throwParseError pe =
@@ -71,17 +74,30 @@ parseSyntax env = (asum
   [ parseLam env
   , parseLet env
   , E.Canonical . E.Prim <$> parsePrim
-  , parsePrimOp env -- It's safe to not use a try since we have the primop as token
+  , parsePrimOp env
+  -- It's safe to not use a try since we have the primop as token,
+  -- so it does not conflict with the app
   , do
       head <- parseArg env
-      args <- many (parseArg env)
-      return (foldl' (\l r -> E.App (E.Syntax l) (E.Syntax r)) head args)
+      parseEl head
   ]) <?> "expression"
+  where
+    parseEl head = asum
+      [ do
+          void (symbolic '.')
+          lbl <- swineIdent
+          parseEl (E.Proj (E.Syntax head) lbl)
+      , do
+          arg <- parseArg env
+          parseEl (E.App (E.Syntax head) (E.Syntax arg))
+      , return head
+      ]
 
 parseArg :: (SwineParsing m) => Env a -> m (E.Syntax a)
 parseArg env = (asum
   [ E.Var <$> parseVar env
   , parens (parseSyntax env)
+  , E.Canonical <$> parseRecord env
   ]) <?> "argument"
 
 parseVar :: (SwineParsing m) => Env a -> m a
@@ -110,7 +126,6 @@ parseLam env0 = do
         , go env'
         ]
       return (E.Canonical (E.Lam pat (E.Syntax body)))
-
 
 parsePattern :: (SwineParsing m) => m E.Pattern
 parsePattern = (asum
@@ -146,6 +161,23 @@ parsePrimOp env = (asum $ do
     args <- listToFwd <$> replicateM (E.primOpArity pop) (parseArg env)
     return (E.PrimOp pop (map E.Syntax args))) <?> "primitive operation"
 
+parseRecord :: (SwineParsing m) => Env a -> m (E.Canonical a)
+parseRecord env = do
+  flds <- void (symbolic '{') >> recordFields
+  case LL.fromList flds of
+    Left _v -> throwParseError (PEDuplicatedLabelInRecord flds)
+    Right rec -> return (E.Record rec)
+  where
+    recordFields = asum
+      [ void (symbolic '}') >> return []
+      , do
+          lbl <- swineIdent
+          void (symbolic ':')
+          e <- parseSyntax env
+          void (symbolic ';')
+          fmap ((lbl, E.Syntax e) :) recordFields
+      ]
+
 swineIdent :: (SwineParsing m) => m Text
 swineIdent = ident swineIdentStyle
 
@@ -176,7 +208,7 @@ swineIdentCharsStart :: CharSet
 swineIdentCharsStart = CharSet.difference
   (Unicode.letter <> Unicode.mark <> Unicode.symbol <> Unicode.punctuation)
   -- Remove things that we need for parsing
-  (CharSet.fromList ['\'', '\\', '"', '{', '}', '[', ']', '(', ')', ',', ';'])
+  (CharSet.fromList ['\'', '\\', '"', '{', '}', '[', ']', '(', ')', ',', ';', ':', '.'])
 
 -- We exclude numbers from the beginning since otherwise we could have
 -- variables that look like number literals

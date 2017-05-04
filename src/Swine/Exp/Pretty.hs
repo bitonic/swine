@@ -6,6 +6,7 @@ import qualified Data.HashMap.Strict as HMS
 import           Swine.Prelude
 import           Swine.Pretty
 import qualified Swine.Exp as E
+import qualified Swine.LookupList as LL
 
 data Names a where
   NNil :: (a -> Maybe Text) -> Names a
@@ -86,6 +87,13 @@ prettySyntax pos env = \case
   E.Var v -> prettyVar env v
   E.Canonical (E.Prim p) -> prettyPrim pos p
   e@(E.Canonical (E.Lam _ _)) -> parensIfArg pos (hang ("\\" <> prettyLam env (E.Syntax e)))
+  E.Canonical (E.Record rec) -> group $
+    hangNoGroup (
+      "{" <##>
+      vsep (do
+        (lbl, e) <- LL.toList rec
+        return (hang (text lbl <> ":" <#> prettyExp PosNormal env e)))) <##>
+    "}"
   E.Let pat0 e1 e2 -> parensIfArg pos $ let
     (pat, env') = weakenEnv env pat0
     in vsep
@@ -96,9 +104,10 @@ prettySyntax pos env = \case
       , prettyExp PosNormal env' e2
       ]
   E.PrimOp pop args -> prettyApp (pretty pop) (map (prettyExp PosArg env) (toList args))
-  e@(E.App _ _) -> let
+  e@E.App{} -> let
     (head, args) = unravelApps (E.Syntax e) []
     in prettyApp (prettyExp PosArg env head) (map (prettyExp PosArg env) args)
+  e@E.Proj{} -> hang (prettyProj (E.Syntax e))
   where
     unravelApps :: E.Exp a -> [E.Exp a] -> (E.Exp a, [E.Exp a])
     unravelApps e0 prevArgs = case e0 of
@@ -111,6 +120,10 @@ prettySyntax pos env = \case
         (pat, vn') = weakenEnv vn pat0
         in pretty pat <+> prettyLam vn' body
       e -> "->" <#> prettyExp PosNormal vn e
+
+    prettyProj = \case
+      E.Syntax (E.Proj e lbl) -> prettyProj e <##> "." <> text lbl
+      e -> prettyExp PosArg env e
 
 prettyEnv :: Position -> VarNames b -> E.Env a b -> (Doc, VarNames a)
 prettyEnv pos env = \case

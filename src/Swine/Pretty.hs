@@ -2,6 +2,7 @@
 module Swine.Pretty
   ( module X
   , hang
+  , hangNoGroup
   , text
   , render
   , indent
@@ -20,7 +21,10 @@ text :: Text -> Doc
 text = PP.text . T.unpack
 
 hang :: Doc -> Doc
-hang = group . nest 2
+hang = group . hangNoGroup
+
+hangNoGroup :: Doc -> Doc
+hangNoGroup = nest 2
 
 indent :: Doc -> Doc
 indent = PP.indent 2

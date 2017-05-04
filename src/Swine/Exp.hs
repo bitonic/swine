@@ -1,6 +1,7 @@
 module Swine.Exp where
 
 import           Swine.Prelude
+import qualified Swine.LookupList as LL
 
 -- Variables
 -----------------------------------------------------------------------
@@ -45,9 +46,12 @@ data PrimOp
   = PrimOpPlusInt64
   deriving (Eq, Ord, Show, Read)
 
+type Record a = LookupList Label (Exp a)
+
 data Canonical a
   = Prim Prim
   | Lam Pattern (Exp (Var a))
+  | Record (Record a)
 
 data Elim a
   = ElimApp (Exp a)
@@ -55,6 +59,8 @@ data Elim a
       PrimOp
       (Bwd Prim) -- The evaluated arguments
       (Fwd (Exp a)) -- The yet-to-be-evaluated arguments
+  | ElimProj
+      Label
 
 -- We call this "syntax" because the constructor roughly reflect
 -- what expressions the user can form.
@@ -67,6 +73,7 @@ data Syntax a where
   -- ^ Primitive operations are always fully saturated.
   -- INVARIANT: If we have @PrimOp pop args@, then
   -- @length args == primOpArity pop@.
+  Proj :: Exp a -> Label -> Syntax a
 
 data Exp a where
   Syntax :: Syntax a -> Exp a
@@ -191,11 +198,13 @@ instance ExpMap Elim where
     ElimApp e -> ElimApp <$> f e
     ElimPrimOp pop evald unevald ->
       ElimPrimOp pop evald <$> for unevald (expMap f)
+    ElimProj label -> pure (ElimProj label)
 
 instance ExpMap Canonical where
   expMap f = \case
     Lam pat body -> Lam pat <$> f body
     Prim p -> pure (Prim p)
+    Record rec -> Record <$> for rec f
 
 -- Evaluation
 -----------------------------------------------------------------------
@@ -204,6 +213,8 @@ data EvalError
   = forall a. EEBadCanonicalForApp (Canonical a) (Exp a)
   | forall a. EEBadCanonicalForPrimOp PrimOp (Canonical a)
   | EEBadArgsForPrimOp PrimOp (Fwd Prim)
+  | forall a. EERecordLabelNotFound (Record a) Label
+  | forall a. EEBadCanonicalForProj (Canonical a) Label
 
 data Eval a
   = EvalCanonical (Canonical a)
@@ -222,6 +233,8 @@ evalToSyntax = \case
         ElimPrimOp pop evald unevald ->
           PrimOp pop
             (bwdReverse (map (Syntax . Canonical . Prim) evald) <> (Syntax (goNeutral v els) :< unevald))
+        ElimProj label ->
+          Proj (Syntax (goNeutral v els)) label
 
 -- Pushes the Susp down into the expression.
 removeSusp :: Exp a -> Syntax a
@@ -231,9 +244,11 @@ removeSusp = \case
     Var v -> removeSusp (envLookup env v)
     Canonical (Lam v body) -> Canonical (Lam v (susp (envLam v env) body))
     Canonical (Prim p) -> Canonical (Prim p)
+    Canonical (Record rec) -> Canonical (Record (map (susp env) rec))
     App fun arg -> App (susp env fun) (susp env arg)
     PrimOp pop args -> PrimOp pop (map (susp env) args)
     Let pat e1 e2 -> Let pat (susp env e1) (susp (envLam pat env) e2)
+    Proj e lbl -> Proj (susp env e) lbl
 
 eval :: Syntax a -> Either EvalError (Eval a)
 eval = \case
@@ -244,7 +259,8 @@ eval = \case
     case fun of
       EvalNeutral h args -> return (EvalNeutral h (args :> ElimApp arg))
       EvalCanonical (Lam v body) -> eval (removeSusp (susp (envCons v arg envNil) body))
-      EvalCanonical p@(Prim _) -> Left (EEBadCanonicalForApp p arg)
+      EvalCanonical p@Prim{} -> Left (EEBadCanonicalForApp p arg)
+      EvalCanonical r@Record{} -> Left (EEBadCanonicalForApp r arg)
   PrimOp pop args00 -> do
     -- TODO we chose to be lazy here and evaluate one-by-one. This is
     -- to be consistent with eventual short-circuiting, but pretty
@@ -260,9 +276,19 @@ eval = \case
                 return (EvalNeutral h (args :> el))
               EvalCanonical canon -> case canon of
                 Prim p -> go (prevArgs :> p) args0
-                e@(Lam _pat _body) -> Left (EEBadCanonicalForPrimOp pop e)
+                e@Lam{} -> Left (EEBadCanonicalForPrimOp pop e)
+                r@Record{} -> Left (EEBadCanonicalForPrimOp pop r)
     go BwdNil args00
   Let v e1 e2 -> eval (removeSusp (susp (envCons v e1 envNil) e2))
+  Proj e0 lbl -> do
+    e <- eval (removeSusp e0)
+    case e of
+      EvalNeutral h args -> return (EvalNeutral h (args :> ElimProj lbl))
+      EvalCanonical (Record rec) -> case LL.lookup rec lbl of
+        Just e' -> eval (removeSusp e')
+        Nothing -> Left (EERecordLabelNotFound rec lbl)
+      EvalCanonical l@Lam{} -> Left (EEBadCanonicalForProj l lbl)
+      EvalCanonical p@Prim{} -> Left (EEBadCanonicalForProj p lbl)
 
 -- Gets rid of all substitutions, without performing any evaluation.
 -- Useful to print out parseable expressions.
@@ -272,9 +298,11 @@ removeAllSusps e0 = case removeSusp e0 of
   e@(Canonical c) -> case c of
     Prim _ -> e
     Lam pat body -> Canonical (Lam pat (Syntax (removeAllSusps body)))
+    Record rec -> Canonical (Record (map (Syntax . removeAllSusps) rec))
   App fun arg -> App (Syntax (removeAllSusps fun)) (Syntax (removeAllSusps arg))
   Let pat e1 e2 -> Let pat (Syntax (removeAllSusps e1)) (Syntax (removeAllSusps e2))
   PrimOp pop args -> PrimOp pop (map (Syntax . removeAllSusps) args)
+  Proj e lbl -> Proj (Syntax (removeAllSusps e)) lbl
 
 -- Primitive operations
 -----------------------------------------------------------------------

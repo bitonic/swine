@@ -17,6 +17,7 @@ library
   hs-source-dirs: src
   exposed-modules:
     Swine
+    Swine.Pair
     Swine.Pretty
     Swine.Exp
     Swine.Exp.Pretty
@@ -39,7 +40,8 @@ library
     hashable,
     bytestring,
     filepath,
-    haskeline
+    haskeline,
+    containers
   default-extensions:
     StrictData
     NoImplicitPrelude

@@ -21,6 +21,7 @@ import           Control.Applicative as X (Alternative, (<*), pure)
 import           Data.ByteString as X (ByteString)
 import           Data.Void as X (Void, absurd)
 import           Data.Functor.Identity as X (Identity(..), runIdentity)
+import           Debug.Trace as X (trace, traceM)
 
 import           Swine.LookupList as X (LookupList)
 import           Swine.Orphans ()
