@@ -25,27 +25,23 @@ run = Haskeline.runInputT
         Nothing -> return ()
         Just ":q" -> return ()
         Just input -> do
-          let mbExp :: Either P.Doc (E.Exp Void)
-              mbExp = EPa.runSwineParsing "repl" 0 0 (T.encodeUtf8 (T.pack input)) (EPa.parseExp (EPa.ENil mempty) <* EPa.eof)
+          let mbExp :: Either P.Doc (E.Syntax Void)
+              mbExp = EPa.runSwineParsing "repl" 0 0 (T.encodeUtf8 (T.pack input)) (EPa.parseSyntax (EPa.ENil mempty) <* EPa.eof)
           case mbExp of
             Left err -> do
               outputDoc ("Error while parsing" P.<#> err)
-            Right exp0 -> do
+            Right syn -> do
               outputDoc $
                 "Parsed expression:" P.<#>
-                P.indent (EPr.prettyExp (EPr.newVarNames absurd) exp0)
-              case E.eval exp0 of
+                P.indent (EPr.prettySyntax EPr.PosNormal (EPr.newVarNames absurd) syn)
+              case E.eval syn of
                 Left _err -> do
                   outputDoc "Error while evaluating"
                 Right exp -> do
                   outputDoc $
                     "Evaluated expression:" P.<#>
-                    P.indent (EPr.prettyExp (EPr.newVarNames absurd) (E.Evaluated exp))
-                  case E.removeAllSusps (E.Evaluated exp) of
-                    Left _err -> do
-                      outputDoc "Error while removing all suspensions"
-                    Right exp' -> do
-                      outputDoc $
-                        "Evaluated expression without suspensions:" P.<#>
-                        P.indent (EPr.prettyExp (EPr.newVarNames absurd) exp')
+                    P.indent (EPr.prettySyntax EPr.PosNormal (EPr.newVarNames absurd) (E.evalToSyntax exp))
+                  outputDoc $
+                    "Evaluated expression without suspensions:" P.<#>
+                    P.indent (EPr.prettySyntax EPr.PosNormal (EPr.newVarNames absurd) (E.removeAllSusps (E.Syntax (E.evalToSyntax exp))))
           loop

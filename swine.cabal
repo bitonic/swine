@@ -60,4 +60,5 @@ library
     DeriveTraversable
     DeriveGeneric
     GeneralizedNewtypeDeriving
+    EmptyCase
   ghc-options: -Wall -funbox-small-strict-fields

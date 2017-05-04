@@ -56,9 +56,6 @@ lookupEnv vn = go (vnNames vn)
         E.B _ -> Just txt
         E.F v' -> go ns v'
 
-class Pretty1 f where
-  pretty1 :: VarNames a -> f a -> Doc
-
 instance Pretty E.Binder where
   pretty (E.Binder v) = text v
 
@@ -67,76 +64,76 @@ instance Pretty E.Pattern where
     E.PatBind v -> pretty v
     E.PatIgnore v -> "_" <> pretty v
 
-prettyExp :: VarNames a -> E.Exp a -> Doc
-prettyExp env = \case
-  E.Evaluated (E.Canonical (E.Lam pat0 body)) -> let
-    (pat, env') = weakenEnv env pat0
-    in hang $ vsep
-      [ "\\" <> pretty pat <+> "->"
-      , prettyExp env' body
-      ]
-  E.Evaluated (E.Canonical (E.Prim p)) -> pretty p
-  e@(E.Evaluated E.Neutral{}) -> fallback e
-  e@E.App{} -> fallback e
-  E.Let pat0 e1 e2 -> let
+data Position
+  = PosArg -- Appears as an arg
+  | PosNormal -- Appears as a top level thing
+
+parensIfArg :: Position -> Doc -> Doc
+parensIfArg = \case
+  PosArg -> parens
+  PosNormal -> id
+
+prettyExp :: Position -> VarNames a -> E.Exp a -> Doc
+prettyExp pos vn = \case
+  E.Syntax e -> prettySyntax pos vn e
+  E.Susp env e -> prettySusp pos vn env (E.Syntax e)
+
+prettyApp :: Doc -> [Doc] -> Doc
+prettyApp head args = hang (vsep (head : args))
+
+prettySyntax :: Position -> VarNames a -> E.Syntax a -> Doc
+prettySyntax pos env = \case
+  E.Var v -> prettyVar env v
+  E.Canonical (E.Prim p) -> prettyPrim pos p
+  e@(E.Canonical (E.Lam _ _)) -> parensIfArg pos (hang ("\\" <> prettyLam env (E.Syntax e)))
+  E.Let pat0 e1 e2 -> parensIfArg pos $ let
     (pat, env') = weakenEnv env pat0
     in vsep
       [ hang $ vsep
           [ "let" <+> pretty pat <+> "<-"
-          , prettyExp env e1 <> ";"
+          , prettyExp PosNormal env e1 <> ";"
           ]
-      , prettyExp env' e2
+      , prettyExp PosNormal env' e2
       ]
-  E.Susp eenv e -> prettySusp env eenv e
+  E.PrimOp pop args -> prettyApp (pretty pop) (map (prettyExp PosArg env) (toList args))
+  e@(E.App _ _) -> let
+    (head, args) = unravelApps (E.Syntax e) []
+    in prettyApp (prettyExp PosArg env head) (map (prettyExp PosArg env) args)
   where
-    fallback e = let
-      (head, args) = unravelApps e []
-      in hang (vsep (map (prettyArg env) (head : args)))
-
+    unravelApps :: E.Exp a -> [E.Exp a] -> (E.Exp a, [E.Exp a])
     unravelApps e0 prevArgs = case e0 of
-      E.App fun arg -> unravelApps fun (arg : prevArgs)
-      E.Evaluated (E.Neutral head args) -> (E.var head, toList args <> prevArgs)
+      E.Syntax (E.App fun arg) -> unravelApps fun (arg : prevArgs)
       e -> (e, prevArgs)
 
-prettyArg :: VarNames a -> E.Exp a -> Doc
-prettyArg env = \case
-  e@(E.Evaluated (E.Canonical (E.Lam _ _))) -> fallback e
-  E.Evaluated (E.Neutral v BwdNil) -> prettyVar env v
-  e@(E.Evaluated (E.Neutral _ (_ :> _))) -> fallback e
-  e@(E.Evaluated (E.Canonical E.Prim{})) -> fallback e
-  e@E.App{} -> fallback e
-  e@E.Let{} -> fallback e
-  e@E.Susp{} -> fallback e
-  where
-    fallback e = parens (prettyExp env e)
+    prettyLam :: VarNames a -> E.Exp a -> Doc
+    prettyLam vn = \case
+      E.Syntax (E.Canonical (E.Lam pat0 body)) -> let
+        (pat, vn') = weakenEnv vn pat0
+        in pretty pat <+> prettyLam vn' body
+      e -> "->" <#> prettyExp PosNormal vn e
 
-prettyEnvExp :: VarNames b -> E.Env a b -> (Doc, VarNames a)
-prettyEnvExp env = \case
+prettyEnv :: Position -> VarNames b -> E.Env a b -> (Doc, VarNames a)
+prettyEnv pos env = \case
   E.EnvComp eenv1 eenv2 -> let
-    (eenv2Doc, env') = prettyEnvArg env eenv2
-    (eenv1Doc, env'') = prettyEnvArg env' eenv1
-    in (hang (vsep ["$comp", eenv1Doc, eenv2Doc]), env'')
+    (eenv2Doc, env') = prettyEnv PosArg env eenv2
+    (eenv1Doc, env'') = prettyEnv PosArg env' eenv1
+    in (parensIfArg pos (hang (vsep ["$comp", eenv1Doc, eenv2Doc])), env'')
   E.EnvWeaken eenv' wk -> let
     (wkDoc, env') = prettyWeaken env wk
-    (eenv'Doc, env'') = prettyEnvArg env' eenv'
-    in (hang (vsep ["$weaken", eenv'Doc, wkDoc]), env'')
+    (eenv'Doc, env'') = prettyEnv PosArg env' eenv'
+    in (parensIfArg pos (hang (vsep ["$weaken", eenv'Doc, wkDoc])), env'')
   E.EnvNormal (E.EnvNil wk) -> let
     (wkDoc, eenv') = prettyWeaken env wk
-    in ("$nil" <+> wkDoc, eenv')
+    in (parensIfArg pos ("$nil" <+> wkDoc), eenv')
   E.EnvNormal (E.EnvCons pat0 e eenv') -> let
-    (eenv'Doc, env') = prettyEnvExp env eenv'
+    (eenv'Doc, env') = prettyEnv PosNormal env eenv'
     (pat, env'') = weakenEnv env' pat0
     in
-      ( group $
-          hang (parens (pretty pat <+> ":=" <#> prettyExp env e)) <+> "::" <#>
+      ( parensIfArg pos $ group $
+          hang (parens (pretty pat <+> ":=" <#> prettyExp PosNormal env e)) <+> "::" <#>
           eenv'Doc
       , env''
       )
-
-prettyEnvArg :: VarNames b -> E.Env a b -> (Doc, VarNames a)
-prettyEnvArg vn env = let
-  (envDoc, vn') = prettyEnvExp vn env
-  in (parens envDoc, vn')
 
 prettyWeaken :: VarNames b -> E.Weaken a b -> (Doc, VarNames a)
 prettyWeaken vn0 wk0 = let
@@ -150,16 +147,20 @@ prettyWeaken vn0 wk0 = let
         (c, eenv') = go (strengthenEnv eenv) wk
         in (c+1, eenv')
 
-prettySusp :: VarNames b -> E.Env a b -> E.Exp a -> Doc
-prettySusp vn env e = let
-  (envDoc, vn') = prettyEnvArg vn env
-  in hang (vsep ["$susp", hang envDoc, prettyArg vn' e])
+prettySusp :: Position -> VarNames b -> E.Env a b -> E.Exp a -> Doc
+prettySusp pos vn env e = let
+  (envDoc, vn') = prettyEnv PosArg vn env
+  in parensIfArg pos (hang (vsep ["$susp", hang envDoc, prettyExp PosArg vn' e]))
 
 prettyVar :: VarNames a -> a -> Doc
 prettyVar vn v = case lookupEnv vn v of
   Nothing -> error "prettyVar TODO this should be an Either monad"
   Just txt -> text txt
 
-instance Pretty E.Prim where
+prettyPrim :: Position -> E.Prim -> Doc
+prettyPrim pos p = parensIfArg pos $ case p of
+  E.PrimInt64 i -> "i64" <+> pretty (toInteger i)
+
+instance Pretty E.PrimOp where
   pretty = \case
-    E.PrimInt64 i -> "i64" <+> pretty (toInteger i)
+    E.PrimOpPlusInt64 -> "+i64"

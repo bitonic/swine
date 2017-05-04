@@ -18,6 +18,11 @@ instance Monoid (Fwd a) where
   mempty = FwdNil
   mappend = (<>)
 
+listToFwd :: [a] -> Fwd a
+listToFwd = \case
+  [] -> FwdNil
+  x : xs -> x :< listToFwd xs
+
 data Bwd a = BwdNil | Bwd a :> a
   deriving (Eq, Ord, Show, Read, Generic, Functor, Foldable, Traversable)
 instance Semigroup (Bwd a) where
@@ -26,3 +31,10 @@ instance Semigroup (Bwd a) where
 instance Monoid (Bwd a) where
   mempty = BwdNil
   mappend = (<>)
+
+bwdReverse :: Bwd a -> Fwd a
+bwdReverse = go FwdNil
+  where
+    go prev = \case
+      BwdNil -> FwdNil
+      xs :> x -> go (x :< prev) xs

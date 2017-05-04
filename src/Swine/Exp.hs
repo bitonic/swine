@@ -28,35 +28,57 @@ type IsVar a = (Eq a, Hashable a)
 -- Expressions
 -----------------------------------------------------------------------
 
--- TODO do the primops as an eliminator storing the already evaluated
--- canonicals and the to-evaluate expressions in the eliminator.
-
 var :: a -> Exp a
-var h = Evaluated (Neutral h mempty)
+var v = Syntax (Var v)
 
 lam :: Pattern -> Exp (Var a) -> Exp a
-lam v body = Evaluated (Canonical (Lam v body))
+lam v body = Syntax (Canonical (Lam v body))
 
 prim :: Prim -> Exp a
-prim p = Evaluated (Canonical (Prim p))
+prim p = Syntax (Canonical (Prim p))
 
 data Prim
   = PrimInt64 Int64
+  deriving (Eq, Ord, Show, Read)
+
+data PrimOp
+  = PrimOpPlusInt64
   deriving (Eq, Ord, Show, Read)
 
 data Canonical a
   = Prim Prim
   | Lam Pattern (Exp (Var a))
 
-data Evaluated a = Canonical (Canonical a) | Neutral a (Bwd (Exp a))
+data Elim a
+  = ElimApp (Exp a)
+  | ElimPrimOp
+      PrimOp
+      (Bwd Prim) -- The evaluated arguments
+      (Fwd (Exp a)) -- The yet-to-be-evaluated arguments
+
+-- We call this "syntax" because the constructor roughly reflect
+-- what expressions the user can form.
+data Syntax a where
+  Var :: a -> Syntax a
+  Canonical :: Canonical a -> Syntax a
+  App :: Exp a -> Exp a -> Syntax a
+  Let :: Pattern -> Exp a -> Exp (Var a) -> Syntax a
+  PrimOp :: PrimOp -> Fwd (Exp a) -> Syntax a
+  -- ^ Primitive operations are always fully saturated.
+  -- INVARIANT: If we have @PrimOp pop args@, then
+  -- @length args == primOpArity pop@.
 
 data Exp a where
-  Evaluated :: Evaluated a -> Exp a
-  -- Yet to be evaluated
-  App :: Exp a -> Exp a -> Exp a
-  Let :: Pattern -> Exp a -> Exp (Var a) -> Exp a
-  Susp :: Env b a -> Exp b -> Exp a
+  Syntax :: Syntax a -> Exp a
+  Susp :: Env b a -> Syntax b -> Exp a
+  -- Note that we can trivially always have syntax here since we have
+  -- EnvComp
   -- TODO it would be good to constraint this to a non-nil susp
+
+susp :: Env b a -> Exp b -> Exp a
+susp env = \case
+  Syntax e -> Susp env e
+  Susp env' e -> Susp (EnvComp env' env) e
 
 -- Environment
 -----------------------------------------------------------------------
@@ -118,7 +140,7 @@ evalEnv = \case
   where
     goComp :: NormalEnv a b -> Env b c -> NormalEnv a c
     goComp (EnvNil wk) env2 = goCompWeaken wk env2
-    goComp (EnvCons v1 e1 env1) env2 = EnvCons v1 (Susp env2 e1) (EnvComp env1 env2)
+    goComp (EnvCons v1 e1 env1) env2 = EnvCons v1 (susp env2 e1) (EnvComp env1 env2)
 
     goWeaken :: Env a b -> Weaken b c -> NormalEnv a c
     goWeaken env0 = \case
@@ -131,7 +153,7 @@ evalEnv = \case
     goWeakenNormal :: NormalEnv a b -> Weaken b c -> NormalEnv a c
     goWeakenNormal env0 wk = case env0 of
       EnvNil wk' -> EnvNil (compWeaken wk' wk)
-      EnvCons v e env -> EnvCons v (Susp (EnvNormal (EnvNil wk)) e) $ case wk of
+      EnvCons v e env -> EnvCons v (susp (EnvNormal (EnvNil wk)) e) $ case wk of
         WeakenZero -> env
         WeakenSucc _ -> EnvWeaken env wk
 
@@ -148,46 +170,123 @@ evalEnv = \case
     compWeaken wk1 WeakenZero = wk1
     compWeaken wk1 (WeakenSucc wk2) = WeakenSucc (compWeaken wk1 wk2)
 
+-- Transformation of expressions
+-----------------------------------------------------------------------
+
+expMap_ :: (ExpMap f) => (forall a. Exp a -> Exp a) -> f b -> f b
+expMap_ f x = runIdentity (expMap (Identity . f) x)
+
+class ExpMap f where
+  expMap ::
+       (Applicative m)
+    => (forall a. Exp a -> m (Exp a))
+    -> f b
+    -> m (f b)
+
+instance ExpMap Exp where
+  expMap f = f
+
+instance ExpMap Elim where
+  expMap f = \case
+    ElimApp e -> ElimApp <$> f e
+    ElimPrimOp pop evald unevald ->
+      ElimPrimOp pop evald <$> for unevald (expMap f)
+
+instance ExpMap Canonical where
+  expMap f = \case
+    Lam pat body -> Lam pat <$> f body
+    Prim p -> pure (Prim p)
+
 -- Evaluation
 -----------------------------------------------------------------------
 
 data EvalError
-  = forall a. EEBadApp (Canonical a) (Exp a)
+  = forall a. EEBadCanonicalForApp (Canonical a) (Exp a)
+  | forall a. EEBadCanonicalForPrimOp PrimOp (Canonical a)
+  | EEBadArgsForPrimOp PrimOp (Fwd Prim)
 
-eval :: Exp a -> Either EvalError (Evaluated a)
+data Eval a
+  = EvalCanonical (Canonical a)
+  | EvalNeutral a (Bwd (Elim a))
+
+evalToSyntax :: Eval a -> Syntax a
+evalToSyntax = \case
+  EvalCanonical c -> Canonical c
+  EvalNeutral h els -> goNeutral h els
+  where
+    goNeutral :: a -> Bwd (Elim a) -> Syntax a
+    goNeutral v = \case
+      BwdNil -> Var v
+      els :> el -> case el of
+        ElimApp arg -> App (Syntax (goNeutral v els)) arg
+        ElimPrimOp pop evald unevald ->
+          PrimOp pop
+            (bwdReverse (map (Syntax . Canonical . Prim) evald) <> (Syntax (goNeutral v els) :< unevald))
+
+-- Pushes the Susp down into the expression.
+removeSusp :: Exp a -> Syntax a
+removeSusp = \case
+  Syntax e -> e
+  Susp env e0 -> case e0 of
+    Var v -> removeSusp (envLookup env v)
+    Canonical (Lam v body) -> Canonical (Lam v (susp (envLam v env) body))
+    Canonical (Prim p) -> Canonical (Prim p)
+    App fun arg -> App (susp env fun) (susp env arg)
+    PrimOp pop args -> PrimOp pop (map (susp env) args)
+    Let pat e1 e2 -> Let pat (susp env e1) (susp (envLam pat env) e2)
+
+eval :: Syntax a -> Either EvalError (Eval a)
 eval = \case
-  Evaluated n -> return n
+  Var v -> return (EvalNeutral v mempty)
+  Canonical c -> return (EvalCanonical c)
   App fun0 arg -> do
-    fun <- eval fun0
+    fun <- eval (removeSusp fun0)
     case fun of
-      Neutral h args -> return (Neutral h (args :> arg))
-      Canonical (Lam v body) -> eval (removeSusp (envCons v arg envNil) body)
-      Canonical p@(Prim _) -> Left (EEBadApp p arg)
-  Let v e1 e2 -> eval (removeSusp (envCons v e1 envNil) e2)
-  Susp env e -> eval (removeSusp env e)
+      EvalNeutral h args -> return (EvalNeutral h (args :> ElimApp arg))
+      EvalCanonical (Lam v body) -> eval (removeSusp (susp (envCons v arg envNil) body))
+      EvalCanonical p@(Prim _) -> Left (EEBadCanonicalForApp p arg)
+  PrimOp pop args00 -> do
+    -- TODO we chose to be lazy here and evaluate one-by-one. This is
+    -- to be consistent with eventual short-circuiting, but pretty
+    -- arbitrary. Decide in a more principled way
+    let go :: Bwd Prim -> Fwd (Exp a) -> Either EvalError (Eval a)
+        go prevArgs = \case
+          FwdNil -> EvalCanonical . Prim <$> evalPrimOp pop prevArgs
+          arg0 :< args0 -> do
+            arg <- eval (removeSusp arg0)
+            case arg of
+              EvalNeutral h args -> do
+                let el = ElimPrimOp pop prevArgs args0
+                return (EvalNeutral h (args :> el))
+              EvalCanonical canon -> case canon of
+                Prim p -> go (prevArgs :> p) args0
+                e@(Lam _pat _body) -> Left (EEBadCanonicalForPrimOp pop e)
+    go BwdNil args00
+  Let v e1 e2 -> eval (removeSusp (susp (envCons v e1 envNil) e2))
 
--- Removes all suspensions
-removeAllSusps :: Exp a -> Either EvalError (Exp a)
-removeAllSusps = \case
-  Evaluated (Neutral h args) -> Evaluated . Neutral h <$> mapM removeAllSusps args
-  Evaluated (Canonical (Lam pat body)) ->
-    Evaluated . Canonical . Lam pat <$> removeAllSusps body
-  Evaluated (Canonical (Prim p)) -> return (Evaluated (Canonical (Prim p)))
-  App fun arg -> App <$> removeAllSusps fun <*> removeAllSusps arg
-  Let pat e1 e2 -> Let pat <$> removeAllSusps e1 <*> removeAllSusps e2
-  Susp env e -> removeAllSusps (removeSusp env e)
+-- Gets rid of all substitutions, without performing any evaluation.
+-- Useful to print out parseable expressions.
+removeAllSusps :: Exp a -> Syntax a
+removeAllSusps e0 = case removeSusp e0 of
+  e@Var{} -> e
+  e@(Canonical c) -> case c of
+    Prim _ -> e
+    Lam pat body -> Canonical (Lam pat (Syntax (removeAllSusps body)))
+  App fun arg -> App (Syntax (removeAllSusps fun)) (Syntax (removeAllSusps arg))
+  Let pat e1 e2 -> Let pat (Syntax (removeAllSusps e1)) (Syntax (removeAllSusps e2))
+  PrimOp pop args -> PrimOp pop (map (Syntax . removeAllSusps) args)
 
--- Pushes the Susp down into the expression, then does something
--- to the leaves
-removeSusp :: Env from to -> Exp from -> Exp to
-removeSusp env = \case
-  Evaluated e0 -> case e0 of
-    Neutral h args -> foldl' App (envLookup env h) (map (Susp env) args)
-    Canonical (Lam v body) -> Evaluated (Canonical (Lam v (Susp (envLam v env) body)))
-    Canonical (Prim p) -> Evaluated (Canonical (Prim p))
-  App fun arg -> App (Susp env fun) (Susp env arg)
-  Let v e1 e2 -> Let v (Susp env e1) (Susp (envLam v env) e2)
-  Susp env' e -> removeSusp (envComp env' env) e
+-- Primitive operations
+-----------------------------------------------------------------------
+
+primOpArity :: PrimOp -> Int
+primOpArity = \case
+  PrimOpPlusInt64 -> 2
+
+evalPrimOp :: PrimOp -> Bwd Prim -> Either EvalError Prim
+evalPrimOp pop args = case (pop, toList args) of
+  (PrimOpPlusInt64, [PrimInt64 x, PrimInt64 y]) -> return (PrimInt64 (x+y))
+  _ -> Left (EEBadArgsForPrimOp pop (bwdReverse args))
 
 -- Instances
 -----------------------------------------------------------------------
@@ -200,4 +299,3 @@ instance Eq Binder where
   _ == _ = True
 instance Hashable Binder where
   hashWithSalt s _ = hashWithSalt s ()
-
