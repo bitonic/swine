@@ -6,7 +6,8 @@ module Swine.Exp.Parser
 
 import           Text.Parser.Char
 import           Text.Parser.Combinators
-import           Text.Parser.Token
+import qualified Text.Parser.Token as Parser
+import           Text.Parser.Token hiding (symbolic)
 import           Text.Parser.Token.Highlight
 import           Data.CharSet (CharSet)
 import qualified Data.CharSet as CharSet
@@ -75,6 +76,7 @@ parseSyntax env = (asum
   , parseLet env
   , E.Canonical . E.Prim <$> parsePrim
   , parsePrimOp env
+  , parseCase env
   -- It's safe to not use a try since we have the primop as token,
   -- so it does not conflict with the app
   , do
@@ -84,7 +86,7 @@ parseSyntax env = (asum
   where
     parseEl head = asum
       [ do
-          void (symbolic '.')
+          symbolic '.'
           lbl <- swineIdent
           parseEl (E.Proj (E.Syntax head) lbl)
       , do
@@ -98,6 +100,7 @@ parseArg env = (asum
   [ E.Var <$> parseVar env
   , parens (parseSyntax env)
   , E.Canonical <$> parseRecord env
+  , E.Canonical <$> parseVariant env
   ]) <?> "argument"
 
 parseVar :: (SwineParsing m) => Env a -> m a
@@ -114,7 +117,7 @@ patName = \case
 
 parseLam :: (SwineParsing m) => Env a -> m (E.Syntax a)
 parseLam env0 = do
-  void (symbolic '\\')
+  symbolic '\\'
   go env0
   where
     go :: (SwineParsing m) => Env a -> m (E.Syntax a)
@@ -122,7 +125,7 @@ parseLam env0 = do
       pat <- parsePattern
       let env' = ECons (patName pat) env
       body <- asum
-        [ void (symbol "->") >> parseSyntax env'
+        [ swineReserve "->" >> parseSyntax env'
         , go env'
         ]
       return (E.Canonical (E.Lam pat (E.Syntax body)))
@@ -135,11 +138,11 @@ parsePattern = (asum
 
 parseLet :: (SwineParsing m) => Env a -> m (E.Syntax a)
 parseLet env = do
-  void (swineReserve "let")
+  swineReserve "let"
   pat <- parsePattern
-  void (symbol "<-")
+  swineReserve "="
   e1 <- parseSyntax env
-  void (symbolic ';')
+  symbolic ';'
   e2 <- parseSyntax (ECons (patName pat) env)
   return (E.Let pat (E.Syntax e1) (E.Syntax e2))
 
@@ -163,20 +166,67 @@ parsePrimOp env = (asum $ do
 
 parseRecord :: (SwineParsing m) => Env a -> m (E.Canonical a)
 parseRecord env = do
-  flds <- void (symbolic '{') >> recordFields
+  flds <- symbolic '{' >> recordFields
   case LL.fromList flds of
     Left _v -> throwParseError (PEDuplicatedLabelInRecord flds)
     Right rec -> return (E.Record rec)
   where
     recordFields = asum
-      [ void (symbolic '}') >> return []
+      [ symbolic '}' >> return []
       , do
           lbl <- swineIdent
-          void (symbolic ':')
-          e <- parseSyntax env
-          void (symbolic ';')
+          e <- parseArg env
           fmap ((lbl, E.Syntax e) :) recordFields
       ]
+
+parseCase :: (SwineParsing m) => Env a -> m (E.Syntax a)
+parseCase env = do
+  swineReserve "case"
+  e <- parseArg env -- We need this otherwise the { gets intepreted as the start of a record
+  symbolic '{'
+  alts <- parseAlts
+  return (E.Case (E.Syntax e) alts)
+  where
+    parseAlts = asum
+      [ symbolic '}' >> return FwdNil
+      , do
+          symbolic '['
+          lbl <- swineIdent
+          asum
+            -- Variant pattern with empty record
+            [ do
+                symbolic ']'
+                swineReserve "->"
+                body <- parseSyntax (ECons Nothing env)
+                symbolic ';'
+                (E.CaseAltVariant lbl (E.PatIgnore (E.Binder "")) (E.Syntax body) :<) <$> parseAlts
+            -- Normal variant pattern
+            , do
+                pat <- parsePattern
+                symbolic ']'
+                swineReserve "->"
+                body <- parseSyntax (ECons (patName pat) env)
+                symbolic ';'
+                (E.CaseAltVariant lbl pat (E.Syntax body) :<) <$> parseAlts
+            ]
+      ]
+
+parseVariant :: (SwineParsing m) => Env a -> m (E.Canonical a)
+parseVariant env = do
+  symbolic '['
+  lbl <- swineIdent
+  asum
+    [ do
+        symbolic ']'
+        return (E.Variant lbl (E.Syntax (E.Canonical (E.Record LL.empty))))
+    , do
+        e <- parseArg env
+        symbolic ']'
+        return (E.Variant lbl (E.Syntax e))
+    ]
+
+symbolic :: (SwineParsing m) => Char -> m ()
+symbolic ch = void (Parser.symbolic ch)
 
 swineIdent :: (SwineParsing m) => m Text
 swineIdent = ident swineIdentStyle
@@ -186,12 +236,12 @@ swineReserve txt = void (reserve swineIdentStyle (T.unpack txt))
 
 swineIdentStyle :: (SwineParsing m) => IdentifierStyle m
 swineIdentStyle = IdentifierStyle
-  { _styleName = "swine"
+  { _styleName = "identifier"
   -- We use $ to pretty-print internal stuff, _ for ignore patterns
   , _styleStart = oneOfSet $ CharSet.difference swineIdentCharsStart (CharSet.singleton '_' <> CharSet.singleton '$')
   , _styleLetter = oneOfSet swineIdentCharsLetter
   , _styleReserved = HS.fromList $
-      [ "case", "let", "->", "<-"
+      [ "case", "let", "->", "<-", "="
       -- Prim
       , "i64"
       ] <> map (T.unpack . fst) primOps

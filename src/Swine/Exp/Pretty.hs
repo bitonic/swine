@@ -92,13 +92,18 @@ prettySyntax pos env = \case
       "{" <##>
       vsep (do
         (lbl, e) <- LL.toList rec
-        return (hang (text lbl <> ":" <#> prettyExp PosNormal env e)))) <##>
+        return (hang (text lbl <#> prettyExp PosArg env e)))) <##>
     "}"
+  E.Canonical (E.Variant lbl e) -> case e of
+    E.Syntax (E.Canonical (E.Record flds)) | LL.null flds ->
+      "[" <> text lbl <> "]"
+    _ ->
+      group (hangNoGroup ("[" <##> text lbl <#> prettyExp PosArg env e) <##> "]")
   E.Let pat0 e1 e2 -> parensIfArg pos $ let
     (pat, env') = weakenEnv env pat0
     in vsep
       [ hang $ vsep
-          [ "let" <+> pretty pat <+> "<-"
+          [ "let" <+> pretty pat <+> "="
           , prettyExp PosNormal env e1 <> ";"
           ]
       , prettyExp PosNormal env' e2
@@ -108,6 +113,19 @@ prettySyntax pos env = \case
     (head, args) = unravelApps (E.Syntax e) []
     in prettyApp (prettyExp PosArg env head) (map (prettyExp PosArg env) args)
   e@E.Proj{} -> hang (prettyProj (E.Syntax e))
+  E.Case e alts -> group $
+    hangNoGroup (
+      "case" <+> prettyExp PosNormal env e <+> "{" <##>
+      vsep (do
+        alt <- toList alts
+        return $ case alt of
+          E.CaseAltDefault pat0 body -> let
+            (pat, env') = weakenEnv env pat0
+            in hang (pretty pat <+> "->" <#> prettyExp PosArg env' body <> ";")
+          E.CaseAltVariant lbl pat0 body -> let
+            (pat, env') = weakenEnv env pat0
+            in hang ("[" <> text lbl <+> pretty pat <> "]" <+> "->" <#> prettyExp PosArg env' body <> ";"))) <##>
+    "}"
   where
     unravelApps :: E.Exp a -> [E.Exp a] -> (E.Exp a, [E.Exp a])
     unravelApps e0 prevArgs = case e0 of

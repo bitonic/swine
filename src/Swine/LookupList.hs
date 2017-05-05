@@ -11,6 +11,14 @@ newtype LookupList a b = LookupList (Fwd (Pair a b))
   deriving (Eq, Ord, Show, Read, Functor, Foldable, Traversable)
   -- I think these instances might be invalid because of strictness
 
+empty :: LookupList a b
+empty = LookupList mempty
+
+null :: LookupList a b -> Bool
+null (LookupList xs) = case xs of
+  FwdNil -> True
+  _ :< _ -> False
+
 lookup :: (Eq a) => LookupList a b -> a -> Maybe b
 lookup (LookupList ll) k = go ll
   where

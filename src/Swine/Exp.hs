@@ -16,7 +16,7 @@ data Pattern
 patBinder :: Pattern -> Binder
 patBinder = \case
   PatBind v -> v
-  PatIgnore (Binder s) -> Binder ("ign_" <> s)
+  PatIgnore (Binder s) -> Binder ("v_" <> s)
 
 data Var a
   = B Binder
@@ -52,6 +52,11 @@ data Canonical a
   = Prim Prim
   | Lam Pattern (Exp (Var a))
   | Record (Record a)
+  | Variant Label (Exp a)
+
+data CaseAlt a
+  = CaseAltVariant Label Pattern (Exp (Var a))
+  | CaseAltDefault Pattern (Exp (Var a))
 
 data Elim a
   = ElimApp (Exp a)
@@ -61,6 +66,8 @@ data Elim a
       (Fwd (Exp a)) -- The yet-to-be-evaluated arguments
   | ElimProj
       Label
+  | ElimCase
+      (Fwd (CaseAlt a))
 
 -- We call this "syntax" because the constructor roughly reflect
 -- what expressions the user can form.
@@ -74,6 +81,7 @@ data Syntax a where
   -- INVARIANT: If we have @PrimOp pop args@, then
   -- @length args == primOpArity pop@.
   Proj :: Exp a -> Label -> Syntax a
+  Case :: Exp a -> Fwd (CaseAlt a) -> Syntax a
 
 data Exp a where
   Syntax :: Syntax a -> Exp a
@@ -199,12 +207,19 @@ instance ExpMap Elim where
     ElimPrimOp pop evald unevald ->
       ElimPrimOp pop evald <$> for unevald (expMap f)
     ElimProj label -> pure (ElimProj label)
+    ElimCase alts -> ElimCase <$> for alts (expMap f)
 
 instance ExpMap Canonical where
   expMap f = \case
     Lam pat body -> Lam pat <$> f body
     Prim p -> pure (Prim p)
     Record rec -> Record <$> for rec f
+    Variant lbl e -> Variant lbl <$> f e
+
+instance ExpMap CaseAlt where
+  expMap f = \case
+    CaseAltVariant lbl pat body -> CaseAltVariant lbl pat <$> f body
+    CaseAltDefault pat body -> CaseAltDefault pat <$> f body
 
 -- Evaluation
 -----------------------------------------------------------------------
@@ -215,6 +230,8 @@ data EvalError
   | EEBadArgsForPrimOp PrimOp (Fwd Prim)
   | forall a. EERecordLabelNotFound (Record a) Label
   | forall a. EEBadCanonicalForProj (Canonical a) Label
+  | forall a. EENoMatchingAlternative Label (Fwd (CaseAlt a))
+  | forall a. EEBadCanonicalForCase (Canonical a) (Fwd (CaseAlt a))
 
 data Eval a
   = EvalCanonical (Canonical a)
@@ -235,6 +252,8 @@ evalToSyntax = \case
             (bwdReverse (map (Syntax . Canonical . Prim) evald) <> (Syntax (goNeutral v els) :< unevald))
         ElimProj label ->
           Proj (Syntax (goNeutral v els)) label
+        ElimCase alts ->
+          Case (Syntax (goNeutral v els)) alts
 
 -- Pushes the Susp down into the expression.
 removeSusp :: Exp a -> Syntax a
@@ -245,12 +264,18 @@ removeSusp = \case
     Canonical (Lam v body) -> Canonical (Lam v (susp (envLam v env) body))
     Canonical (Prim p) -> Canonical (Prim p)
     Canonical (Record rec) -> Canonical (Record (map (susp env) rec))
+    Canonical (Variant lbl e) -> Canonical (Variant lbl (susp env e))
     App fun arg -> App (susp env fun) (susp env arg)
     PrimOp pop args -> PrimOp pop (map (susp env) args)
     Let pat e1 e2 -> Let pat (susp env e1) (susp (envLam pat env) e2)
     Proj e lbl -> Proj (susp env e) lbl
+    Case e alts -> Case (susp env e) (map (suspAlt env) alts)
+  where
+    suspAlt env = \case
+      CaseAltVariant lbl pat body -> CaseAltVariant lbl pat (susp (envLam pat env) body)
+      CaseAltDefault pat body -> CaseAltDefault pat (susp (envLam pat env) body)
 
-eval :: Syntax a -> Either EvalError (Eval a)
+eval :: forall a. Syntax a -> Either EvalError (Eval a)
 eval = \case
   Var v -> return (EvalNeutral v mempty)
   Canonical c -> return (EvalCanonical c)
@@ -258,9 +283,11 @@ eval = \case
     fun <- eval (removeSusp fun0)
     case fun of
       EvalNeutral h args -> return (EvalNeutral h (args :> ElimApp arg))
-      EvalCanonical (Lam v body) -> eval (removeSusp (susp (envCons v arg envNil) body))
-      EvalCanonical p@Prim{} -> Left (EEBadCanonicalForApp p arg)
-      EvalCanonical r@Record{} -> Left (EEBadCanonicalForApp r arg)
+      EvalCanonical c -> case c of
+        Lam v body -> eval (removeSusp (susp (envCons v arg envNil) body))
+        p@Prim{} -> Left (EEBadCanonicalForApp p arg)
+        r@Record{} -> Left (EEBadCanonicalForApp r arg)
+        v@Variant{} -> Left (EEBadCanonicalForApp v arg)
   PrimOp pop args00 -> do
     -- TODO we chose to be lazy here and evaluate one-by-one. This is
     -- to be consistent with eventual short-circuiting, but pretty
@@ -278,31 +305,62 @@ eval = \case
                 Prim p -> go (prevArgs :> p) args0
                 e@Lam{} -> Left (EEBadCanonicalForPrimOp pop e)
                 r@Record{} -> Left (EEBadCanonicalForPrimOp pop r)
+                v@Variant{} -> Left (EEBadCanonicalForPrimOp pop v)
     go BwdNil args00
   Let v e1 e2 -> eval (removeSusp (susp (envCons v e1 envNil) e2))
   Proj e0 lbl -> do
     e <- eval (removeSusp e0)
     case e of
       EvalNeutral h args -> return (EvalNeutral h (args :> ElimProj lbl))
-      EvalCanonical (Record rec) -> case LL.lookup rec lbl of
-        Just e' -> eval (removeSusp e')
-        Nothing -> Left (EERecordLabelNotFound rec lbl)
-      EvalCanonical l@Lam{} -> Left (EEBadCanonicalForProj l lbl)
-      EvalCanonical p@Prim{} -> Left (EEBadCanonicalForProj p lbl)
+      EvalCanonical c -> case c of
+        Record rec -> case LL.lookup rec lbl of
+          Just e' -> eval (removeSusp e')
+          Nothing -> Left (EERecordLabelNotFound rec lbl)
+        l@Lam{} -> Left (EEBadCanonicalForProj l lbl)
+        p@Prim{} -> Left (EEBadCanonicalForProj p lbl)
+        v@Variant{} -> Left (EEBadCanonicalForProj v lbl)
+  Case e0 alts0 -> do
+    e <- eval (removeSusp e0)
+    case e of
+      EvalNeutral h args -> return (EvalNeutral h (args :> ElimCase alts0))
+      EvalCanonical c -> case c of
+        Variant lbl arg -> do
+          let go :: Fwd (CaseAlt a) -> Either EvalError (Eval a)
+              go = \case
+                FwdNil -> Left (EENoMatchingAlternative lbl alts0)
+                alt :< alts -> case alt of
+                  CaseAltDefault pat body ->
+                    eval (removeSusp (susp (envCons pat arg envNil) body))
+                  CaseAltVariant lbl' pat body ->
+                    if lbl == lbl'
+                      then eval (removeSusp (susp (envCons pat arg envNil) body))
+                      else go alts
+          go alts0
+        p@Prim{} -> Left (EEBadCanonicalForCase p alts0)
+        l@Lam{} -> Left (EEBadCanonicalForCase l alts0)
+        r@Record{} -> Left (EEBadCanonicalForCase r alts0)
 
 -- Gets rid of all substitutions, without performing any evaluation.
 -- Useful to print out parseable expressions.
 removeAllSusps :: Exp a -> Syntax a
 removeAllSusps e0 = case removeSusp e0 of
-  e@Var{} -> e
-  e@(Canonical c) -> case c of
-    Prim _ -> e
+  Var v -> Var v
+  Canonical c -> case c of
+    Prim p -> Canonical (Prim p)
     Lam pat body -> Canonical (Lam pat (Syntax (removeAllSusps body)))
     Record rec -> Canonical (Record (map (Syntax . removeAllSusps) rec))
+    Variant lbl e -> Canonical (Variant lbl (Syntax (removeAllSusps e)))
   App fun arg -> App (Syntax (removeAllSusps fun)) (Syntax (removeAllSusps arg))
   Let pat e1 e2 -> Let pat (Syntax (removeAllSusps e1)) (Syntax (removeAllSusps e2))
   PrimOp pop args -> PrimOp pop (map (Syntax . removeAllSusps) args)
   Proj e lbl -> Proj (Syntax (removeAllSusps e)) lbl
+  Case e alts -> Case
+    (Syntax (removeAllSusps e))
+    (map
+      (\case
+        CaseAltVariant lbl pat body -> CaseAltVariant lbl pat (Syntax (removeAllSusps body))
+        CaseAltDefault pat body -> CaseAltDefault pat (Syntax (removeAllSusps body)))
+      alts)
 
 -- Primitive operations
 -----------------------------------------------------------------------
