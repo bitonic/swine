@@ -56,6 +56,7 @@ data Canonical a
 
 data CaseAlt a
   = CaseAltVariant Label Pattern (Exp (Var a))
+  | CaseAltPrim Prim (Exp a)
   | CaseAltDefault Pattern (Exp (Var a))
 
 data Elim a
@@ -76,6 +77,7 @@ data Syntax a where
   Canonical :: Canonical a -> Syntax a
   App :: Exp a -> Exp a -> Syntax a
   Let :: Pattern -> Exp a -> Exp (Var a) -> Syntax a
+  -- ^ A set of mutually recursive bindings
   PrimOp :: PrimOp -> Fwd (Exp a) -> Syntax a
   -- ^ Primitive operations are always fully saturated.
   -- INVARIANT: If we have @PrimOp pop args@, then
@@ -220,6 +222,7 @@ instance ExpMap CaseAlt where
   expMap f = \case
     CaseAltVariant lbl pat body -> CaseAltVariant lbl pat <$> f body
     CaseAltDefault pat body -> CaseAltDefault pat <$> f body
+    CaseAltPrim p body -> CaseAltPrim p <$> f body
 
 -- Evaluation
 -----------------------------------------------------------------------
@@ -230,7 +233,7 @@ data EvalError
   | EEBadArgsForPrimOp PrimOp (Fwd Prim)
   | forall a. EERecordLabelNotFound (Record a) Label
   | forall a. EEBadCanonicalForProj (Canonical a) Label
-  | forall a. EENoMatchingAlternative Label (Fwd (CaseAlt a))
+  | forall a. EENoMatchingAlternative (Canonical a) (Fwd (CaseAlt a))
   | forall a. EEBadCanonicalForCase (Canonical a) (Fwd (CaseAlt a))
 
 data Eval a
@@ -274,6 +277,7 @@ removeSusp = \case
     suspAlt env = \case
       CaseAltVariant lbl pat body -> CaseAltVariant lbl pat (susp (envLam pat env) body)
       CaseAltDefault pat body -> CaseAltDefault pat (susp (envLam pat env) body)
+      CaseAltPrim p body -> CaseAltPrim p (susp env body)
 
 eval :: forall a. Syntax a -> Either EvalError (Eval a)
 eval = \case
@@ -327,16 +331,33 @@ eval = \case
         Variant lbl arg -> do
           let go :: Fwd (CaseAlt a) -> Either EvalError (Eval a)
               go = \case
-                FwdNil -> Left (EENoMatchingAlternative lbl alts0)
+                FwdNil -> Left (EENoMatchingAlternative (Variant lbl arg) alts0)
                 alt :< alts -> case alt of
                   CaseAltDefault pat body ->
-                    eval (removeSusp (susp (envCons pat arg envNil) body))
+                    -- We put e0 on purpose to minimize evaluations shown to the
+                    -- user
+                    eval (removeSusp (susp (envCons pat e0 envNil) body))
                   CaseAltVariant lbl' pat body ->
                     if lbl == lbl'
                       then eval (removeSusp (susp (envCons pat arg envNil) body))
                       else go alts
+                  CaseAltPrim{} -> Left (EEBadCanonicalForCase (Variant lbl arg) alts0)
           go alts0
-        p@Prim{} -> Left (EEBadCanonicalForCase p alts0)
+        Prim p -> do
+          let go :: Fwd (CaseAlt a) -> Either EvalError (Eval a)
+              go = \case
+                FwdNil -> Left (EENoMatchingAlternative (Prim p) alts0)
+                alt :< alts -> case alt of
+                  CaseAltDefault pat body ->
+                    -- We put e0 on purpose to minimize evaluations shown to the
+                    -- user
+                    eval (removeSusp (susp (envCons pat e0 envNil) body))
+                  CaseAltVariant{} ->
+                    Left (EEBadCanonicalForCase (Prim p) alts0)
+                  CaseAltPrim p' body -> if p == p'
+                    then eval (removeSusp body)
+                    else go alts
+          go alts0
         l@Lam{} -> Left (EEBadCanonicalForCase l alts0)
         r@Record{} -> Left (EEBadCanonicalForCase r alts0)
 
@@ -359,7 +380,8 @@ removeAllSusps e0 = case removeSusp e0 of
     (map
       (\case
         CaseAltVariant lbl pat body -> CaseAltVariant lbl pat (Syntax (removeAllSusps body))
-        CaseAltDefault pat body -> CaseAltDefault pat (Syntax (removeAllSusps body)))
+        CaseAltDefault pat body -> CaseAltDefault pat (Syntax (removeAllSusps body))
+        CaseAltPrim p body -> CaseAltPrim p (Syntax (removeAllSusps body)))
       alts)
 
 -- Primitive operations

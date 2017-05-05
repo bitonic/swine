@@ -209,6 +209,12 @@ parseCase env = do
                 symbolic ';'
                 (E.CaseAltVariant lbl pat (E.Syntax body) :<) <$> parseAlts
             ]
+      , do
+          p <- parsePrim
+          swineReserve "->"
+          body <- parseSyntax env
+          symbolic ';'
+          (E.CaseAltPrim p (E.Syntax body) :<) <$> parseAlts
       ]
 
 parseVariant :: (SwineParsing m) => Env a -> m (E.Canonical a)

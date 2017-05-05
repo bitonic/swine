@@ -115,16 +115,18 @@ prettySyntax pos env = \case
   e@E.Proj{} -> hang (prettyProj (E.Syntax e))
   E.Case e alts -> group $
     hangNoGroup (
-      "case" <+> prettyExp PosNormal env e <+> "{" <##>
+      "case" <+> prettyExp PosArg env e <+> "{" <##>
       vsep (do
         alt <- toList alts
         return $ case alt of
           E.CaseAltDefault pat0 body -> let
             (pat, env') = weakenEnv env pat0
-            in hang (pretty pat <+> "->" <#> prettyExp PosArg env' body <> ";")
+            in hang (pretty pat <+> "->" <#> prettyExp PosNormal env' body <> ";")
           E.CaseAltVariant lbl pat0 body -> let
             (pat, env') = weakenEnv env pat0
-            in hang ("[" <> text lbl <+> pretty pat <> "]" <+> "->" <#> prettyExp PosArg env' body <> ";"))) <##>
+            in hang ("[" <> text lbl <+> pretty pat <> "]" <+> "->" <#> prettyExp PosNormal env' body <> ";")
+          E.CaseAltPrim p body ->
+            hang (prettyPrim PosNormal p <+> "->" <#> prettyExp PosNormal env body <> ";"))) <##>
     "}"
   where
     unravelApps :: E.Exp a -> [E.Exp a] -> (E.Exp a, [E.Exp a])
