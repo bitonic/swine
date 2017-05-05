@@ -4,11 +4,11 @@ module Swine.Prelude
   , tshow
   ) where
 
-import           Prelude as X (Bool(..), Either(..), return, id, error, Eq(..), (.), (<$>), Maybe(..), ($), length, (>), Int, (+), snd, show, Show, Applicative, FilePath, (-), fromIntegral, Ord, Read, toInteger, Integer, IO, mapM, (<*>), Monad, (=<<), fst, Char)
+import           Prelude as X (Bool(..), Either(..), return, id, error, Eq(..), (.), (<$>), Maybe(..), ($), length, (>), Int, (+), snd, show, Show, Applicative, FilePath, (-), fromIntegral, Ord, Read, toInteger, Integer, IO, mapM, (<*>), Monad, (=<<), fst, Char, String, concat)
 import           Data.Text as X (Text)
 import           Data.HashMap.Strict as X (HashMap)
 import           Data.Semigroup as X ((<>))
-import           Data.List as X (foldl')
+import           Data.List as X (foldl', intersperse)
 import           Data.Functor as X (Functor)
 import           Data.Foldable as X (asum, Foldable, toList)
 import           Data.Traversable as X (Traversable, for)
