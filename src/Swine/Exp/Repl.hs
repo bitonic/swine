@@ -56,4 +56,7 @@ run = Haskeline.runInputT
                   Just "}:" -> processInput (concat (intersperse "\n" (toList chunks)))
                   Just chunk -> collect (chunks :> chunk)
           collect BwdNil
+        Just (':' : cmd) -> do
+          outputDoc ("Unrecognized command" P.<+> P.text (T.pack cmd))
+          loop
         Just input -> processInput input
