@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
-module Swine.Exp.Parser
-  ( module Swine.Exp.Parser
+module Swine.Core.Parser
+  ( module Swine.Core.Parser
   , eof
   ) where
 
@@ -21,7 +21,7 @@ import qualified Text.Trifecta as Trifecta
 import qualified Text.Trifecta.Delta as Trifecta
 
 import           Swine.Prelude
-import qualified Swine.Exp as E
+import qualified Swine.Core as E
 import qualified Swine.Pretty as P
 import qualified Swine.LookupList as LL
 

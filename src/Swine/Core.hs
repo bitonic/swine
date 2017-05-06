@@ -1,4 +1,4 @@
-module Swine.Exp where
+module Swine.Core where
 
 import           Swine.Prelude
 import qualified Swine.LookupList as LL

@@ -1,11 +1,11 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-module Swine.Exp.Pretty where
+module Swine.Core.Pretty where
 
 import qualified Data.HashMap.Strict as HMS
 
 import           Swine.Prelude
 import           Swine.Pretty
-import qualified Swine.Exp as E
+import qualified Swine.Core as E
 import qualified Swine.LookupList as LL
 
 data Names a where

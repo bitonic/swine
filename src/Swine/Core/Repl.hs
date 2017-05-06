@@ -1,13 +1,13 @@
-module Swine.Exp.Repl where
+module Swine.Core.Repl where
 
 import qualified System.Console.Haskeline as Haskeline
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 
 import           Swine.Prelude
-import qualified Swine.Exp as E
-import qualified Swine.Exp.Pretty as EPr
-import qualified Swine.Exp.Parser as EPa
+import qualified Swine.Core as E
+import qualified Swine.Core.Pretty as EPr
+import qualified Swine.Core.Parser as EPa
 import qualified Swine.Pretty as P
 
 run :: IO ()

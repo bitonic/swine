@@ -19,9 +19,9 @@ library
     Swine
     Swine.Pair
     Swine.Pretty
-    Swine.Exp
-    Swine.Exp.Pretty
-    Swine.Exp.Parser
+    Swine.Core
+    Swine.Core.Pretty
+    Swine.Core.Parser
     Swine.Prelude
     Swine.LookupList
     Swine.List
