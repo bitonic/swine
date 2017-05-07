@@ -16,14 +16,6 @@ parseExp = asum
   , parseCompound
   ]
   where
-    parseProjs e = asum
-      [ do
-          symbolic '.'
-          lbl <- swineIdent
-          parseProjs (Proj e lbl)
-      , return e
-      ]
-
     parseApps e = asum
       [ do
           arg <- parseExpArg
@@ -38,22 +30,34 @@ parseExp = asum
             symbolic ':'
             ty <- parseExp
             return (Annotated head ty)
-        , parseProjs head
         , parseApps head
         ]
 
 parseExpArg :: (SwineParsing m) => m Exp
-parseExpArg = asum
-  [ Var <$> parseVar
-  , Type <$ swineReserve "Type"
-  , parseRecord
-  , parseRecordType
-  , parseVariant
-  , parseVariantType
-  , PrimType <$> swinePrimType
-  , parens parseExp
-  , Hole <$ swineReserve "?"
-  ]
+parseExpArg = do
+  e <- asum
+    [ Var <$> parseVar
+    , Type <$ swineReserve "Type"
+    , parseRecord
+    , parseRecordType
+    , parseVariant
+    , parseVariantType
+    , PrimType <$> swinePrimType
+    , parens parseExp
+    , Hole <$ swineReserve "?"
+    ]
+  asum
+    [ parseProjs e
+    , return e
+    ]
+  where
+    parseProjs e = asum
+      [ do
+          symbolic '.'
+          lbl <- swineIdent
+          parseProjs (Proj e lbl)
+      , return e
+      ]
 
 parseVar :: (SwineParsing m) => m Var
 parseVar = swineIdent

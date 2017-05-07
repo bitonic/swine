@@ -10,7 +10,7 @@ module Swine.Pretty
   , (<##>)
   ) where
 
-import           Text.PrettyPrint.ANSI.Leijen as X hiding (hang, (<>), text, indent)
+import           Text.PrettyPrint.ANSI.Leijen as X hiding (hang, (<>), text, indent, (<$>))
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
 import qualified Data.Text as T
 import           Text.Trifecta () -- For the semigroup instance
@@ -37,3 +37,4 @@ render x = fromString (displayS (renderPretty 0.8 80 x) "")
 
 (<##>) :: Doc -> Doc -> Doc
 (<##>) = (PP.<$$>)
+

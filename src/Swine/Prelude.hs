@@ -2,9 +2,11 @@ module Swine.Prelude
   ( module X
   , map
   , tshow
+  , (>>)
+  , (<$)
   ) where
 
-import           Prelude as X (Bool(..), Either(..), return, id, error, Eq(..), (.), (<$>), Maybe(..), ($), length, (>), Int, (+), snd, show, Show, Applicative, FilePath, (-), fromIntegral, Ord, Read, toInteger, Integer, IO, mapM, (<*>), Monad, (=<<), fst, Char, String, concat)
+import           Prelude as X (Bool(..), Either(..), return, id, error, Eq(..), (.), (<$>), Maybe(..), ($), length, (>), Int, (+), snd, show, Show, Applicative, FilePath, (-), fromIntegral, Ord, Read, toInteger, Integer, IO, mapM, (<*>), Monad, (=<<), fst, Char, String, concat, uncurry)
 import           Data.Text as X (Text)
 import           Data.HashMap.Strict as X (HashMap)
 import           Data.Semigroup as X ((<>))
@@ -22,10 +24,13 @@ import           Data.ByteString as X (ByteString)
 import           Data.Void as X (Void, absurd)
 import           Data.Functor.Identity as X (Identity(..), runIdentity)
 import           Debug.Trace as X (trace, traceM)
+import           Control.Monad as X (void, replicateM)
 
 import           Swine.LookupList as X (LookupList)
 import           Swine.Orphans ()
 import           Swine.List as X
+import           Swine.Option as X
+import           Swine.Pair as X
 
 import           Data.Functor (fmap)
 
@@ -34,3 +39,9 @@ map = fmap
 
 tshow :: (Show a, IsString s) => a -> s
 tshow = fromString . show
+
+(>>) :: (Applicative m) => m () -> m a -> m a
+a >> b = (\_x y -> y) <$> a <*> b
+
+(<$) :: (Applicative m) => a -> m () -> m a
+x <$ m = m >> pure x
