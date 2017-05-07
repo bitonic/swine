@@ -6,7 +6,7 @@ module Swine.Prelude
   , (<$)
   ) where
 
-import           Prelude as X (Bool(..), Either(..), return, id, error, Eq(..), (.), (<$>), Maybe(..), ($), length, (>), Int, (+), snd, show, Show, Applicative, FilePath, (-), fromIntegral, Ord, Read, toInteger, Integer, IO, mapM, (<*>), Monad, (=<<), fst, Char, String, concat, uncurry)
+import           Prelude as X (Bool(..), Either(..), return, id, error, Eq(..), (.), (<$>), Maybe(..), ($), length, (>), Int, (+), snd, show, Show, Applicative, FilePath, (-), fromIntegral, Ord, Read, toInteger, Integer, IO, mapM, (<*>), Monad, (=<<), fst, Char, String, concat, uncurry, words, readFile)
 import           Data.Text as X (Text)
 import           Data.HashMap.Strict as X (HashMap)
 import           Data.Semigroup as X ((<>))
@@ -25,6 +25,7 @@ import           Data.Void as X (Void, absurd)
 import           Data.Functor.Identity as X (Identity(..), runIdentity)
 import           Debug.Trace as X (trace, traceM)
 import           Control.Monad as X (void, replicateM)
+import           Control.Monad.IO.Class as X (liftIO)
 
 import           Swine.LookupList as X (LookupList)
 import           Swine.Orphans ()

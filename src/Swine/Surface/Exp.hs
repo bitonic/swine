@@ -31,8 +31,6 @@ data Exp
   | Prim Prim
   -- Variables
   | Var Var
-  -- Annotated
-  | Annotated Exp Type
   -- Computation
   | App Exp Exp
   | Proj Exp Label

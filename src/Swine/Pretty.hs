@@ -30,7 +30,7 @@ indent :: Doc -> Doc
 indent = PP.indent 2
 
 render :: (IsString s) => Doc -> s
-render x = fromString (displayS (renderPretty 0.8 80 x) "")
+render x = fromString (displayS (renderSmart 0.6 80 x) "")
 
 (<#>) :: Doc -> Doc -> Doc
 (<#>) = (PP.<$>)

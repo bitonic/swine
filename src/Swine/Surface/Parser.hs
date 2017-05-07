@@ -6,15 +6,15 @@ import           Swine.Surface.Exp
 import           Swine.Prim
 
 parseExp :: (SwineParsing m) => m Exp
-parseExp = asum
+parseExp = (asum
   [ parseLam
-  , parseLamType
+  , parseLamTypeStartingWithNamedArg
   , parseCase
   , parseLet
   , Prim <$> swinePrim
   , parsePrimOp
   , parseCompound
-  ]
+  ]) <?> "expression"
   where
     parseApps e = asum
       [ do
@@ -27,9 +27,9 @@ parseExp = asum
       head <- parseExpArg
       asum
         [ do
-            symbolic ':'
-            ty <- parseExp
-            return (Annotated head ty)
+            swineReserve "->"
+            e <- parseExp
+            return (LamType None head e)
         , parseApps head
         ]
 
@@ -63,7 +63,7 @@ parseVar :: (SwineParsing m) => m Var
 parseVar = swineIdent
 
 parseRecord :: (SwineParsing m) => m Exp
-parseRecord = Record <$> (symbolic '{' >> recordFields)
+parseRecord = (Record <$> (symbolic '{' >> recordFields)) <?> "record"
   where
     recordFields = asum
       [ symbolic '}' >> return mempty
@@ -71,12 +71,12 @@ parseRecord = Record <$> (symbolic '{' >> recordFields)
           lbl <- swineIdent
           symbolic '='
           e <- parseExp
-          symbolic ','
+          symbolic ';'
           map (Pair lbl e :<) recordFields
       ]
 
 parseRecordType :: (SwineParsing m) => m Exp
-parseRecordType = RecordType <$> (symbolic '{' >> recordFields)
+parseRecordType = (RecordType <$> (symbolic '{' >> recordFields)) <?> "record type"
   where
     recordFields = asum
       [ symbolic '}' >> return mempty
@@ -84,12 +84,12 @@ parseRecordType = RecordType <$> (symbolic '{' >> recordFields)
           lbl <- swineIdent
           symbolic ':'
           e <- parseExp
-          symbolic ','
+          symbolic ';'
           map (Pair lbl e :<) recordFields
       ]
 
 parseVariant :: (SwineParsing m) => m Exp
-parseVariant = do
+parseVariant = (do
   symbolic '['
   lbl <- swineIdent
   asum
@@ -101,10 +101,10 @@ parseVariant = do
         e <- parseExp
         symbolic ']'
         return (Variant lbl (Some e))
-    ]
+    ]) <?> "variant"
 
 parseVariantType :: (SwineParsing m) => m Exp
-parseVariantType = VariantType <$> (symbolic '[' >> variantFields)
+parseVariantType = (VariantType <$> (symbolic '[' >> variantFields)) <?> "variant type"
   where
     variantFields = asum
       [ symbolic ']' >> return mempty
@@ -113,16 +113,17 @@ parseVariantType = VariantType <$> (symbolic '[' >> variantFields)
           asum
             [ do
                 symbolic ':'
-                e <- parseExpArg
+                e <- parseExp
+                symbolic ';'
                 map (Pair lbl (Some e) :<) variantFields
             , map (Pair lbl None :<) variantFields
             ]
       ]
 
 parseLam :: (SwineParsing m) => m Exp
-parseLam = do
+parseLam = (do
   symbolic '\\'
-  go
+  go) <?> "lambda"
   where
     go = do
       Pair pat mbType <- parseTypedPattern
@@ -133,7 +134,7 @@ parseLam = do
       return (Lam pat mbType body)
 
 parseTypedPattern :: (SwineParsing m) => m (Pair Pattern (Option Type))
-parseTypedPattern = asum
+parseTypedPattern = (asum
   [ do
       pat <- parsePattern
       return (Pair pat None)
@@ -142,10 +143,10 @@ parseTypedPattern = asum
       symbolic ':'
       ty <- parseExp
       return (Pair pat (Some ty))
-  ]
+  ]) <?> "typed pattern"
 
 parsePattern :: (SwineParsing m) => m Pattern
-parsePattern = asum
+parsePattern = (asum
   [ PatBinder <$> parseBinder
   , do
       symbolic '['
@@ -153,6 +154,7 @@ parsePattern = asum
       asum
         [ symbolic ']' >> return (PatVariant lbl None)
         , do
+            symbolic '='
             pat <- parsePattern
             symbolic ']'
             return (PatVariant lbl (Some pat))
@@ -165,55 +167,50 @@ parsePattern = asum
                 lbl <- swineIdent
                 asum
                   [ do
-                      symbolic ','
+                      symbolic ';'
                       (Pair lbl None :<) <$> go
                   , do
                       symbolic '='
                       pat <- parsePattern
-                      symbolic ','
+                      symbolic ';'
                       (Pair lbl (Some pat) :<) <$> go
                   ]
             ]
       PatRecord <$> go
-  ]
+  ]) <?> "pattern"
 
 parseBinder :: (SwineParsing m) => m Binder
-parseBinder = asum
+parseBinder = (asum
   [ Bind <$> swineIdent
   , Ignore <$> swineIgnore
-  ]
+  ]) <?> "binder"
 
-parseLamType :: (SwineParsing m) => m Type
-parseLamType = do
-  args <- asum
-    [ concat <$> many parseNamedArg
-    , do
-        ty <- parseExpArg
-        return [(None, ty)]
-    ]
-  swineReserve "->"
-  res <- parseExp
+parseLamTypeStartingWithNamedArg :: (SwineParsing m) => m Type
+parseLamTypeStartingWithNamedArg = do
+  args <- concat <$> ((:) <$> parseNamedArg <*> many parseNamedArg)
   let go = \case
-        [] -> res
-        (mbBind, argTy) : rest -> LamType mbBind argTy (go rest)
-  return (go args)
-  where
-    parseNamedArg :: (SwineParsing m) => m [(Option Binder, Type)]
-    parseNamedArg = (do
-      binders <- try $ do
-        binders <- (:) <$> parseBinder <*> many parseBinder
-        symbolic ':'
-        return binders
-      ty <- parseExp
-      return [(Some binder, ty) | binder <- binders]) <?> "function type argument"
+        [] -> do
+          swineReserve "->"
+          parseExp
+        (mbBind, argTy) : rest -> LamType mbBind argTy <$> go rest
+  go args
+
+parseNamedArg :: (SwineParsing m) => m [(Option Binder, Type)]
+parseNamedArg = (parens (do
+  binders <- try $ do
+    binders <- (:) <$> parseBinder <*> many parseBinder
+    symbolic ':'
+    return binders
+  ty <- parseExp
+  return [(Some binder, ty) | binder <- binders])) <?> "function type argument"
 
 parseCase :: (SwineParsing m) => m Exp
-parseCase = do
+parseCase = (do
   swineReserve "case"
   e <- parseExpArg -- We need this otherwise the { gets interpreted as start of record
   symbolic '{'
   alts <- parseAlts
-  return (Case e alts)
+  return (Case e alts)) <?> "case"
   where
     parseAlts = asum
       [ symbolic '}' >> return FwdNil
@@ -226,10 +223,10 @@ parseCase = do
       ]
 
 parseLet :: (SwineParsing m) => m Exp
-parseLet = do
+parseLet = (do
   swineReserve "let"
   n <- parseBinder
-  pars <- listToFwd <$> many (parens parseTypedPattern)
+  pars <- listToFwd <$> many parseTypedPattern
   retTy <- asum
     [ do
         symbolic ':'
@@ -240,14 +237,13 @@ parseLet = do
         symbolic '='
         return None
     ]
-  symbolic '='
   body <- parseExp
   symbolic ';'
   e <- parseExp
-  return (Let n pars retTy body e)
+  return (Let n pars retTy body e)) <?> "let"
 
 parsePrimOp :: (SwineParsing m) => m Exp
-parsePrimOp = do
+parsePrimOp = (do
   pop <- swinePrimOp
   args <- listToFwd <$> replicateM (primOpArity pop) parseExpArg
-  return (PrimOp pop args)
+  return (PrimOp pop args)) <?> "prim op"

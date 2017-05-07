@@ -64,7 +64,6 @@ prettyExp pos = \case
   Var v -> text v
   e@Proj{} -> prettyProj e
   e@App{} -> prettyApp pos e
-  Annotated e ty -> parensIfArg pos (hang (prettyExp PosNormal e <+> ":" <#> prettyExp PosNormal ty))
   PrimOp pop args -> parensIfArg pos $
     hang (vsep (prettyPrimOp pop : map (prettyExp PosArg) (toList args)))
   Hole -> "?"
@@ -73,25 +72,20 @@ prettyExp pos = \case
       "case" <+> prettyExp PosArg e <+> "{" <##>
       vsep (do
         Pair pat body <- toList alts
-        return (hang (prettyPattern pat <+> "->" <#> prettyExp PosNormal body)))) <##>
+        return (hang (prettyPattern pat <+> "->" <#> prettyExp PosNormal body <> ";")))) <##>
     "}"
-  Let n pars0 mbResTy body e -> let
-    go = \case
-      FwdNil -> case mbResTy of
-        None -> []
-        Some resTy -> [":" <+> prettyExp PosNormal resTy]
-      Pair pat mbTy :< pars -> let
-        eq = case (pars, mbTy) of
-          (FwdNil, None) -> " ="
-          _ -> ""
-        in (prettyTypedPattern pat mbTy <> eq) : go pars
-    in parensIfArg pos $ hang $ vsep
-      [ hang $ vsep
-          [ hang (vsep (prettyBinder n : go pars0))
-          , prettyExp PosNormal body <> ";"
-          ]
-      , prettyExp PosNormal e
-      ]
+  Let n pars0 mbResTy body e -> parensIfArg pos $ vsep
+    [ hang $ vsep $
+        [ "let" <+> prettyBinder n
+        , hang (vsep (map (\(Pair pat mbTy) -> prettyTypedPattern pat mbTy) (toList pars0)))
+        ] <>
+        (case mbResTy of
+          None -> []
+          Some resTy -> [hang (":" <#> prettyExp PosNormal resTy)]) <>
+        [ hang ("=" <#> (prettyExp PosNormal body <> ";"))
+        ]
+    , prettyExp PosNormal e
+    ]
   e@Lam{} -> prettyLam pos e
 
 prettyPrimType :: PrimType -> Doc
@@ -122,16 +116,16 @@ prettyLamType pos ty0 = parensIfArg pos (go0 BwdNil ty0)
               Some n -> parens (prettyBinder n <+> ":" <+> prettyExp PosNormal ty)
             arr = case (mbN, args) of
               (Some _, ((Some _, _) : _)) -> ""
-              _ -> " ->"
+              _ -> " -> "
             in (doc <> arr) : go args
-        in hang (vsep (go (toList prevArgs) <> [prettyExp PosNormal ty]))
+        in hang (vcat (go (toList prevArgs) <> [prettyExp PosNormal ty]))
 
 prettyProj :: Exp -> Doc
 prettyProj = go BwdNil
   where
     go prevProjs = \case
       Proj e lbl -> go (prevProjs :> lbl) e
-      e -> hang (vsep (prettyExp PosArg e : ["." <> text lbl | lbl <- toList prevProjs]))
+      e -> hang (vcat (prettyExp PosArg e : ["." <> text lbl | lbl <- toList prevProjs]))
 
 prettyApp :: Position -> Exp -> Doc
 prettyApp pos = parensIfArg pos . go []
@@ -166,8 +160,7 @@ prettyLam pos = parensIfArg pos . go BwdNil
   where
     go prevArgs = \case
       Lam pat mbTy body -> go (prevArgs :> (pat, mbTy)) body
-      e -> group $
-        group (
-          hangNoGroup (
-            "\\" <##> vsep (map (uncurry prettyTypedPattern) (toList prevArgs))) <##> "->") <##>
-        prettyExp PosNormal e
+      e -> group $ vsep
+        [ hang ("\\" <+> vsep (map (uncurry prettyTypedPattern) (toList prevArgs)))
+        , "->" <+> prettyExp PosNormal e
+        ]
