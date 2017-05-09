@@ -97,8 +97,10 @@ swineIdentStyle = IdentifierStyle
   , _styleLetter = oneOfSet swineIdentCharsLetter
   , _styleReserved = HS.fromList $
       [ "case", "let", "rec", "->", "<-", "="
-      , "Type", "?"
+      , "Type", "?", "Empty"
       , "I64", "i64", "I64+", "I64-"
+      , "TyEq", "ValEq"
+      , "coe", "axiom"
       ]
   , _styleHighlight = Identifier
   , _styleReservedHighlight = ReservedIdentifier
@@ -113,7 +115,7 @@ swineIdentCharsStart :: CharSet
 swineIdentCharsStart = CharSet.difference
   (Unicode.letter <> Unicode.mark <> Unicode.symbol <> Unicode.punctuation)
   -- Remove things that we need for parsing
-  (CharSet.fromList ['\'', '\\', '"', '{', '}', '[', ']', '(', ')', ',', ';', ':', '.'])
+  (CharSet.fromList ['\'', '\\', '"', '{', '}', '[', ']', '(', ')', ',', ';', ':', '.', '|'])
 
 -- We exclude numbers from the beginning since otherwise we could have
 -- variables that look like number literals

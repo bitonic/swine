@@ -13,7 +13,7 @@ import           Data.CharSet (CharSet)
 import qualified Data.CharSet as CharSet
 import qualified Data.CharSet.Unicode as Unicode
 import qualified Data.HashSet as HS
-import           Control.Monad.Except
+import           Control.Monad.Except hiding ((>>))
 import qualified Data.HashMap.Strict as HMS
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T

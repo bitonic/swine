@@ -2,6 +2,7 @@ module Swine.Surface.Exp where
 
 import           Swine.Prelude
 import Swine.Prim
+import Swine.Meta
 
 type Var = Text
 type Label = Text
@@ -17,6 +18,13 @@ data Pattern
 
 type Type = Exp
 
+data Prop
+  = PropEmpty
+  | PropProduct (Fwd (Pair Label Prop))
+  | PropForall (Option Binder) Type Prop
+  | PropTypeEq Type Type
+  | PropValEq Type Exp Type Exp
+
 data Exp
   -- Types
   = Type
@@ -24,6 +32,7 @@ data Exp
   | RecordType (Fwd (Pair Label Type))
   | VariantType (Fwd (Pair Label (Option Type)))
   | PrimType PrimType
+  | PropType Prop
   -- Canonical values
   | Lam Pattern (Option Type) Exp
   | Record (Fwd (Pair Label Exp))
@@ -46,5 +55,12 @@ data Exp
       Exp -- Rest
   | PrimOp PrimOp (Fwd Exp) -- Always fully saturated
   -- Holes
-  | Hole
+  | Hole (Option Meta)
+  -- Coercion
+  | Coe
+      Type -- First type
+      Type -- Second type
+      Type -- Proof of equality
+      Exp -- Thing to transport
+  | Axiom Prop
 

@@ -4,6 +4,7 @@ import           Swine.Pretty
 import           Swine.Surface.Exp
 import           Swine.Prelude
 import           Swine.Prim
+import           Swine.Meta
 
 data Position
   = PosArg
@@ -66,7 +67,9 @@ prettyExp pos = \case
   e@App{} -> prettyApp pos e
   PrimOp pop args -> parensIfArg pos $
     hang (vsep (prettyPrimOp pop : map (prettyExp PosArg) (toList args)))
-  Hole -> "?"
+  Hole mbMeta -> case mbMeta of
+    None -> "?"
+    Some (Meta mv) -> "?" <> int mv
   Case e alts -> group $
     hangNoGroup (
       "case" <+> prettyExp PosArg e <+> "{" <##>
@@ -87,6 +90,18 @@ prettyExp pos = \case
     , prettyExp PosNormal e
     ]
   e@Lam{} -> prettyLam pos e
+  PropType p -> group (hangNoGroup ("|" <##> prettyProp PosNormal p) <##> "|")
+  Coe ty1 ty2 eq val -> group $ vsep
+    [ "coe"
+    , prettyExp PosArg ty1
+    , prettyExp PosArg ty2
+    , prettyExp PosArg eq
+    , prettyExp PosArg val
+    ]
+  Axiom prop -> group $ vsep
+    [ "axiom"
+    , prettyProp PosArg prop
+    ]
 
 prettyPrimType :: PrimType -> Doc
 prettyPrimType = \case
@@ -113,7 +128,7 @@ prettyLamType pos ty0 = parensIfArg pos (go0 BwdNil ty0)
           (mbN, argTy) : args -> let
             doc = case mbN of
               None -> prettyExp PosArg argTy
-              Some n -> parens (prettyBinder n <+> ":" <+> prettyExp PosNormal ty)
+              Some n -> parens (prettyBinder n <> ":" <+> prettyExp PosNormal argTy)
             arr = case (mbN, args) of
               (Some _, ((Some _, _) : _)) -> ""
               _ -> " -> "
@@ -164,3 +179,47 @@ prettyLam pos = parensIfArg pos . go BwdNil
         [ hang ("\\" <+> vsep (map (uncurry prettyTypedPattern) (toList prevArgs)))
         , "->" <+> prettyExp PosNormal e
         ]
+
+prettyProp :: Position -> Prop -> Doc
+prettyProp pos = \case
+  PropEmpty -> "Empty"
+  PropProduct pp -> group $
+    hangNoGroup (
+      "{" <##>
+      (vsep (do
+        Pair lbl p <- toList pp
+        return (hang (text lbl <+> ":" <#> prettyProp PosNormal p <> ";"))))) <##>
+    "}"
+  e@PropForall{} -> prettyForall pos e
+  PropTypeEq ty1 ty2 -> hang $ vsep
+    [ "TyEq"
+    , prettyExp PosArg ty1
+    , prettyExp PosArg ty2
+    ]
+  PropValEq ty1 e1 ty2 e2 -> hang $ vsep
+    [ "ValEq"
+    , prettyExp PosArg e1
+    , prettyExp PosArg ty1
+    , prettyExp PosArg e2
+    , prettyExp PosArg ty2
+    ]
+
+prettyForall :: Position -> Prop -> Doc
+prettyForall pos ty0 = parensIfArg pos (go0 BwdNil ty0)
+  where
+    go0 prevArgs = \case
+      PropForall mbN argTy rest -> go0 (prevArgs :> (mbN, argTy)) rest
+      prop -> let
+        go :: [(Option Binder, Type)] -> [Doc]
+        go = \case
+          [] -> []
+          (mbN, argTy) : args -> let
+            doc = case mbN of
+              None -> prettyExp PosArg argTy
+              Some n -> parens (prettyBinder n <> ":" <+> prettyExp PosNormal argTy)
+            arr = case (mbN, args) of
+              (Some _, ((Some _, _) : _)) -> ""
+              _ -> " -> "
+            in (doc <> arr) : go args
+        in hang (vcat (go (toList prevArgs) <> [prettyProp PosNormal prop]))
+

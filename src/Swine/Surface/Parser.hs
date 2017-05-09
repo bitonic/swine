@@ -5,6 +5,12 @@ import           Swine.Parser
 import           Swine.Surface.Exp
 import           Swine.Prim
 
+parseFunctionArgument :: (SwineParsing m) => m Exp
+parseFunctionArgument = do
+  head <- parseExpArg
+  args <- many parseExpArg
+  return (foldl' App head args)
+
 parseExp :: (SwineParsing m) => m Exp
 parseExp = (asum
   [ parseLam
@@ -16,21 +22,14 @@ parseExp = (asum
   , parseCompound
   ]) <?> "expression"
   where
-    parseApps e = asum
-      [ do
-          arg <- parseExpArg
-          parseApps (App e arg)
-      , return e
-      ]
-
     parseCompound = do
-      head <- parseExpArg
+      e1 <- parseFunctionArgument
       asum
         [ do
             swineReserve "->"
-            e <- parseExp
-            return (LamType None head e)
-        , parseApps head
+            e2 <- parseCompound
+            return (LamType None e1 e2)
+        , return e1
         ]
 
 parseExpArg :: (SwineParsing m) => m Exp
@@ -43,8 +42,11 @@ parseExpArg = do
     , parseVariant
     , parseVariantType
     , PrimType <$> swinePrimType
+    , Hole None <$ swineReserve "?"
+    , parsePropType
     , parens parseExp
-    , Hole <$ swineReserve "?"
+    , parseCoe
+    , parseAxiom
     ]
   asum
     [ parseProjs e
@@ -75,15 +77,18 @@ parseRecord = (Record <$> (symbolic '{' >> recordFields)) <?> "record"
           map (Pair lbl e :<) recordFields
       ]
 
-parseRecordType :: (SwineParsing m) => m Exp
-parseRecordType = (RecordType <$> (symbolic '{' >> recordFields)) <?> "record type"
+parseRecordType :: (SwineParsing m) => m Type
+parseRecordType = (parseRecordType_ RecordType parseExp) <?> "record type"
+
+parseRecordType_ :: (SwineParsing m) => (Fwd (Pair Label a) -> b) -> m a -> m b
+parseRecordType_ f p = f <$> (symbolic '{' >> recordFields)
   where
     recordFields = asum
       [ symbolic '}' >> return mempty
       , do
           lbl <- swineIdent
           symbolic ':'
-          e <- parseExp
+          e <- p
           symbolic ';'
           map (Pair lbl e :<) recordFields
       ]
@@ -196,13 +201,13 @@ parseLamTypeStartingWithNamedArg = do
   go args
 
 parseNamedArg :: (SwineParsing m) => m [(Option Binder, Type)]
-parseNamedArg = (parens (do
-  binders <- try $ do
+parseNamedArg = (try (parens (do
+  binders <- do
     binders <- (:) <$> parseBinder <*> many parseBinder
     symbolic ':'
     return binders
   ty <- parseExp
-  return [(Some binder, ty) | binder <- binders])) <?> "function type argument"
+  return [(Some binder, ty) | binder <- binders]))) <?> "function type named argument"
 
 parseCase :: (SwineParsing m) => m Exp
 parseCase = (do
@@ -247,3 +252,73 @@ parsePrimOp = (do
   pop <- swinePrimOp
   args <- listToFwd <$> replicateM (primOpArity pop) parseExpArg
   return (PrimOp pop args)) <?> "prim op"
+
+parsePropType :: (SwineParsing m) => m Exp
+parsePropType = do
+  symbolic '|'
+  p <- parseProp
+  symbolic '|'
+  return (PropType p)
+
+parseProp :: (SwineParsing m) => m Prop
+parseProp = (asum
+  [ parseSimple
+  , parseForallStartingWithNamedArg
+  , parseForall
+  ]) <?> "prop"
+  where
+    parseSimple = asum
+      [ PropEmpty <$ swineReserve "Empty"
+      , parsePropProduct
+      , do
+          swineReserve "TyEq"
+          ty1 <- parseExpArg
+          ty2 <- parseExpArg
+          return (PropTypeEq ty1 ty2)
+      , do
+          swineReserve "ValEq"
+          e1 <- parseExpArg
+          ty1 <- parseExpArg
+          e2 <- parseExpArg
+          ty2 <- parseExpArg
+          return (PropValEq ty1 e1 ty2 e2)
+      ]
+
+    parseForallStartingWithNamedArg = do
+      args <- concat <$> ((:) <$> parseNamedArg <*> many parseNamedArg)
+      let go = \case
+            [] -> do
+              swineReserve "->"
+              parseProp
+            (mbBind, argTy) : rest -> PropForall mbBind argTy <$> go rest
+      go args
+
+    parseForall = do
+      argTy <- parseFunctionArgument
+      swineReserve "->"
+      p <- parseProp
+      return (PropForall None argTy p)
+
+parsePropProduct :: (SwineParsing m) => m Prop
+parsePropProduct = (parseRecordType_ PropProduct parseProp) <?> "prop product"
+
+parsePropArg :: (SwineParsing m) => m Prop
+parsePropArg = asum
+  [ PropEmpty <$ swineReserve "Empty"
+  , parens parseProp
+  ]
+
+parseCoe :: (SwineParsing m) => m Exp
+parseCoe = do
+  swineReserve "coe"
+  ty1 <- parseExpArg
+  ty2 <- parseExpArg
+  eq <- parseExpArg
+  val <- parseExpArg
+  return (Coe ty1 ty2 eq val)
+
+parseAxiom :: (SwineParsing m) => m Exp
+parseAxiom = do
+  swineReserve "axiom"
+  p <- parseProp
+  return (Axiom p)
