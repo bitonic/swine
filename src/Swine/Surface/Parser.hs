@@ -4,6 +4,8 @@ import           Swine.Prelude
 import           Swine.Parser
 import           Swine.Surface.Exp
 import           Swine.Prim
+import           Swine.Binder
+import qualified Swine.LookupList as LL
 
 parseFunctionArgument :: (SwineParsing m) => m Exp
 parseFunctionArgument = do
@@ -42,7 +44,7 @@ parseExpArg = do
     , parseVariant
     , parseVariantType
     , PrimType <$> swinePrimType
-    , Hole None <$ swineReserve "?"
+    , Hole <$ swineReserve "?"
     , parsePropType
     , parens parseExp
     , parseCoe
@@ -65,7 +67,9 @@ parseVar :: (SwineParsing m) => m Var
 parseVar = swineIdent
 
 parseRecord :: (SwineParsing m) => m Exp
-parseRecord = (Record <$> (symbolic '{' >> recordFields)) <?> "record"
+parseRecord = (do
+  flds <- parseLookupList =<< (symbolic '{' >> recordFields)
+  return (Record flds)) <?> "record"
   where
     recordFields = asum
       [ symbolic '}' >> return mempty
@@ -74,14 +78,16 @@ parseRecord = (Record <$> (symbolic '{' >> recordFields)) <?> "record"
           symbolic '='
           e <- parseExp
           symbolic ';'
-          map (Pair lbl e :<) recordFields
+          map ((lbl, e) :) recordFields
       ]
 
 parseRecordType :: (SwineParsing m) => m Type
 parseRecordType = (parseRecordType_ RecordType parseExp) <?> "record type"
 
-parseRecordType_ :: (SwineParsing m) => (Fwd (Pair Label a) -> b) -> m a -> m b
-parseRecordType_ f p = f <$> (symbolic '{' >> recordFields)
+parseRecordType_ :: (SwineParsing m) => (LookupList Label a -> b) -> m a -> m b
+parseRecordType_ f p = do
+  flds <- parseLookupList =<< (symbolic '{' >> recordFields)
+  return (f flds)
   where
     recordFields = asum
       [ symbolic '}' >> return mempty
@@ -90,7 +96,7 @@ parseRecordType_ f p = f <$> (symbolic '{' >> recordFields)
           symbolic ':'
           e <- p
           symbolic ';'
-          map (Pair lbl e :<) recordFields
+          map ((lbl, e) :) recordFields
       ]
 
 parseVariant :: (SwineParsing m) => m Exp
@@ -109,7 +115,9 @@ parseVariant = (do
     ]) <?> "variant"
 
 parseVariantType :: (SwineParsing m) => m Exp
-parseVariantType = (VariantType <$> (symbolic '[' >> variantFields)) <?> "variant type"
+parseVariantType = (do
+  flds <- parseLookupList =<< (symbolic '[' >> variantFields)
+  return (VariantType flds)) <?> "variant type"
   where
     variantFields = asum
       [ symbolic ']' >> return mempty
@@ -120,8 +128,8 @@ parseVariantType = (VariantType <$> (symbolic '[' >> variantFields)) <?> "varian
                 symbolic ':'
                 e <- parseExp
                 symbolic ';'
-                map (Pair lbl (Some e) :<) variantFields
-            , map (Pair lbl None :<) variantFields
+                map ((lbl, Some e) :) variantFields
+            , map ((lbl, None) :) variantFields
             ]
       ]
 
@@ -131,24 +139,12 @@ parseLam = (do
   go) <?> "lambda"
   where
     go = do
-      Pair pat mbType <- parseTypedPattern
+      pat <- parsePattern
       body <- asum
         [ swineReserve "->" >> parseExp
         , go
         ]
-      return (Lam pat mbType body)
-
-parseTypedPattern :: (SwineParsing m) => m (Pair Pattern (Option Type))
-parseTypedPattern = (asum
-  [ do
-      pat <- parsePattern
-      return (Pair pat None)
-  , parens $ do
-      pat <- parsePattern
-      symbolic ':'
-      ty <- parseExp
-      return (Pair pat (Some ty))
-  ]) <?> "typed pattern"
+      return (Lam pat body)
 
 parsePattern :: (SwineParsing m) => m Pattern
 parsePattern = (asum
@@ -167,21 +163,33 @@ parsePattern = (asum
   , do
       symbolic '{'
       let go = asum
-            [ symbolic '}' >> return FwdNil
+            [ symbolic '}' >> return []
             , do
                 lbl <- swineIdent
                 asum
                   [ do
                       symbolic ';'
-                      (Pair lbl None :<) <$> go
+                      ((lbl, RFPPun None) :) <$> go
+                  , do
+                      symbolic ':'
+                      ty <- parseExp
+                      symbolic ';'
+                      ((lbl, RFPPun (Some ty)) :) <$> go
                   , do
                       symbolic '='
                       pat <- parsePattern
                       symbolic ';'
-                      (Pair lbl (Some pat) :<) <$> go
+                      ((lbl, RFPNormal pat) :) <$> go
                   ]
             ]
-      PatRecord <$> go
+      PatRecord <$> (parseLookupList =<< go)
+  , do
+      symbolic '('
+      pat <- parsePattern
+      symbolic ':'
+      ty <- parseExp
+      symbolic ')'
+      return (PatTyped pat ty)
   ]) <?> "pattern"
 
 parseBinder :: (SwineParsing m) => m Binder
@@ -231,7 +239,7 @@ parseLet :: (SwineParsing m) => m Exp
 parseLet = (do
   swineReserve "let"
   n <- parseBinder
-  pars <- listToFwd <$> many parseTypedPattern
+  pars <- listToFwd <$> many parsePattern
   retTy <- asum
     [ do
         symbolic ':'
@@ -268,7 +276,10 @@ parseProp = (asum
   ]) <?> "prop"
   where
     parseSimple = asum
-      [ PropEmpty <$ swineReserve "Empty"
+      [ do
+          symbolic '['
+          symbolic ']'
+          return PropEmpty
       , parsePropProduct
       , do
           swineReserve "TyEq"
@@ -322,3 +333,8 @@ parseAxiom = do
   swineReserve "axiom"
   p <- parseProp
   return (Axiom p)
+
+parseLookupList :: (SwineParsing m) => [(Label, a)] -> m (LookupList Label a)
+parseLookupList xs = case LL.fromList xs of
+  Left x -> fail ("Duplicate label " <> show x)
+  Right xs' -> return xs'

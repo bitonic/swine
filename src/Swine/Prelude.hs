@@ -6,13 +6,14 @@ module Swine.Prelude
   , (<$)
   ) where
 
-import           Prelude as X (Bool(..), Either(..), return, id, error, Eq(..), (.), (<$>), Maybe(..), ($), length, (>), Int, (+), snd, show, Show, Applicative, FilePath, (-), fromIntegral, Ord, Read, toInteger, Integer, IO, mapM, (<*>), Monad, (=<<), fst, Char, String, concat, uncurry, words, readFile)
+import           Prelude as X (Bool(..), Either(..), return, id, error, Eq(..), (.), (<$>), Maybe(..), ($), length, (>), Int, (+), snd, show, Show, Applicative, FilePath, (-), fromIntegral, Ord, Read, toInteger, Integer, IO, mapM, (<*>), Monad, (=<<), fst, Char, String, concat, uncurry, words, readFile, fail)
 import           Data.Text as X (Text)
 import           Data.HashMap.Strict as X (HashMap)
+import           Data.HashSet as X (HashSet)
 import           Data.Semigroup as X ((<>))
 import           Data.List as X (foldl', intersperse)
-import           Data.Functor as X (Functor)
-import           Data.Foldable as X (asum, Foldable, toList)
+import           Data.Functor as X (Functor(fmap))
+import           Data.Foldable as X (asum, Foldable, toList, foldMap)
 import           Data.Traversable as X (Traversable, for)
 import           Data.Int as X (Int64)
 import           Data.String as X (IsString, fromString)
@@ -26,14 +27,12 @@ import           Data.Functor.Identity as X (Identity(..), runIdentity)
 import           Debug.Trace as X (trace, traceM)
 import           Control.Monad as X (void, replicateM)
 import           Control.Monad.IO.Class as X (liftIO)
+import           Control.Monad.Reader as X (ReaderT, withReaderT)
 
 import           Swine.LookupList as X (LookupList)
-import           Swine.Orphans ()
 import           Swine.List as X
 import           Swine.Option as X
 import           Swine.Pair as X
-
-import           Data.Functor (fmap)
 
 map :: (Functor f) => (a -> b) -> f a -> f b
 map = fmap

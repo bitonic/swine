@@ -4,7 +4,8 @@ import           Swine.Pretty
 import           Swine.Surface.Exp
 import           Swine.Prelude
 import           Swine.Prim
-import           Swine.Meta
+import           Swine.Binder
+import qualified Swine.LookupList as LL
 
 data Position
   = PosArg
@@ -33,14 +34,14 @@ prettyExp pos = \case
     hangNoGroup (
       "{" <##>
       (vsep (do
-        Pair lbl fldTy <- toList flds
+        (lbl, fldTy) <- LL.toList flds
         return (hang (text lbl <+> ":" <#> prettyExp PosNormal fldTy <> ";"))))) <##>
     "}"
   VariantType vars -> group $
     hangNoGroup (
       "[" <##>
       (vsep (do
-        Pair lbl mbVarTy <- toList vars
+        (lbl, mbVarTy) <- LL.toList vars
         return $ case mbVarTy of
           None -> text lbl <> ";"
           Some varTy ->
@@ -51,7 +52,7 @@ prettyExp pos = \case
     hangNoGroup (
       "{" <##>
       (vsep (do
-        Pair lbl e <- toList flds
+        (lbl, e) <- LL.toList flds
         return (hang (text lbl <+> "=" <#> prettyExp PosNormal e <> ";"))))) <##>
     "}"
   Variant lbl mbE -> case mbE of
@@ -67,9 +68,7 @@ prettyExp pos = \case
   e@App{} -> prettyApp pos e
   PrimOp pop args -> parensIfArg pos $
     hang (vsep (prettyPrimOp pop : map (prettyExp PosArg) (toList args)))
-  Hole mbMeta -> case mbMeta of
-    None -> "?"
-    Some (Meta mv) -> "?" <> int mv
+  Hole -> "?"
   Case e alts -> group $
     hangNoGroup (
       "case" <+> prettyExp PosArg e <+> "{" <##>
@@ -80,7 +79,7 @@ prettyExp pos = \case
   Let n pars0 mbResTy body e -> parensIfArg pos $ vsep
     [ hang $ vsep $
         [ "let" <+> prettyBinder n
-        , hang (vsep (map (\(Pair pat mbTy) -> prettyTypedPattern pat mbTy) (toList pars0)))
+        , hang (vsep (map prettyPattern (toList pars0)))
         ] <>
         (case mbResTy of
           None -> []
@@ -164,19 +163,21 @@ prettyPattern = \case
     hangNoGroup (
       "{" <##>
       (vsep (do
-        Pair lbl mbPat <- toList flds
+        (lbl, mbPat) <- LL.toList flds
         return $ case mbPat of
-          None -> text lbl <> ";"
-          Some pat -> hang (text lbl <+> "=" <#> prettyPattern pat <> ";")))) <##>
+          RFPNormal pat -> hang (text lbl <+> "=" <#> prettyPattern pat <> ";")
+          RFPPun None -> text lbl <> ";"
+          RFPPun (Some ty) -> text lbl <> ":" <+> prettyExp PosNormal ty <> ";"))) <##>
       "}"
+  PatTyped pat ty -> parens (prettyPattern pat <+> ":" <+> prettyExp PosNormal ty)
 
 prettyLam :: Position -> Exp -> Doc
 prettyLam pos = parensIfArg pos . go BwdNil
   where
     go prevArgs = \case
-      Lam pat mbTy body -> go (prevArgs :> (pat, mbTy)) body
+      Lam pat body -> go (prevArgs :> pat) body
       e -> group $ vsep
-        [ hang ("\\" <+> vsep (map (uncurry prettyTypedPattern) (toList prevArgs)))
+        [ hang ("\\" <+> vsep (map prettyPattern (toList prevArgs)))
         , "->" <+> prettyExp PosNormal e
         ]
 
@@ -187,7 +188,7 @@ prettyProp pos = \case
     hangNoGroup (
       "{" <##>
       (vsep (do
-        Pair lbl p <- toList pp
+        (lbl, p) <- LL.toList pp
         return (hang (text lbl <+> ":" <#> prettyProp PosNormal p <> ";"))))) <##>
     "}"
   e@PropForall{} -> prettyForall pos e

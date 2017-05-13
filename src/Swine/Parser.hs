@@ -97,7 +97,7 @@ swineIdentStyle = IdentifierStyle
   , _styleLetter = oneOfSet swineIdentCharsLetter
   , _styleReserved = HS.fromList $
       [ "case", "let", "rec", "->", "<-", "="
-      , "Type", "?", "Empty"
+      , "Type", "?"
       , "I64", "i64", "I64+", "I64-"
       , "TyEq", "ValEq"
       , "coe", "axiom"

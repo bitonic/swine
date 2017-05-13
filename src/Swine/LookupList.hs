@@ -7,7 +7,7 @@ import           Control.Monad (when)
 import           Swine.List
 import           Swine.Pair
 
-newtype LookupList a b = LookupList (Fwd (Pair a b))
+newtype LookupList a b = LookupList {toFwd :: Fwd (Pair a b)}
   deriving (Eq, Ord, Show, Read, Functor, Foldable, Traversable)
   -- I think these instances might be invalid because of strictness
 

@@ -19,13 +19,22 @@ library
     Swine
     Swine.Pair
     Swine.Pretty
-    Swine.Core
-    Swine.Core.Pretty
-    Swine.Core.Parser
     Swine.Prelude
     Swine.LookupList
     Swine.List
-    Swine.Orphans
+    Swine.Option
+    Swine.Binder
+    Swine.Parser
+    Swine.Prim
+    Swine.Repl
+    Swine.Surface
+    Swine.Surface.Exp
+    Swine.Surface.Pretty
+    Swine.Surface.Parser
+    Swine.Surface.Repl
+    Swine.Lang.Exp
+    Swine.Lang.Distill
+    Swine.Lang.Rename
   default-language: Haskell2010
   build-depends:
     base >= 4.7 && < 5,
