@@ -22,6 +22,12 @@ data Telescope f a
   = TelescopeNil
   | TelescopeCons Label (f a) (Telescope f (Var a))
 
+data Variant f a = MkVariant
+  { variantLabel :: Label
+  , variantBody :: f a
+  , variantBodyImplicit :: Bool
+  }
+
 data Canonical f a
   = Type
   | LamType Binder (f a) (f (Var a))
@@ -30,18 +36,24 @@ data Canonical f a
   | PrimType PrimType
   | forall to. Lam (f a) (Pattern f a to) (f to)
   | Record (LookupList Label (f a))
-  | Variant Label (f a)
+  | Variant (Variant f a)
   | Prim Prim
 
 data PatRecord f from to where
   PatRecordNil :: PatRecord f a a
   PatRecordCons :: Label -> Pattern f a b -> PatRecord f b c -> PatRecord f a c
 
+data PatVariant f from to = MkPatVariant
+  { patVarLabel :: Label
+  , patVarPattern :: Pattern f from to
+  , patVarImplicit :: Bool
+  }
+
 data Pattern f from to where
   PatDefault :: Binder -> Pattern f from (Var from)
   PatTyped :: Pattern f from to -> f from -> Pattern f from to
   PatPrim :: Prim -> Pattern f from from
-  PatVariant :: Label -> Pattern f from to -> Pattern f from to
+  PatVariant :: PatVariant f from to -> Pattern f from to
   PatRecord :: PatRecord f from to -> Pattern f from to
 
 data CaseAlt f from = forall to. CaseAlt
@@ -62,9 +74,9 @@ data Let f from = forall to. MkLet
   , letRest :: f (Var to)
   }
 
-data Case f a where
-  CaseNil :: Fwd (CaseAlt f a) -> Case f a
-  CaseCons :: Case f (Var a) -> Case f a
+data Case f from to where
+  CaseNil :: Fwd (CaseAlt f to) -> Case f from to
+  CaseCons :: f from -> Case f from (Var to) -> Case f from to
 
 data Syntax f a
   = Canonical (Canonical f a)
@@ -73,8 +85,7 @@ data Syntax f a
   | Proj (f a) Label
   | Case
       (f a) -- The scrutinized
-      (Case f TopLevel) -- The sealed case
-      (Fwd (CaseAlt f a)) -- The arguments
+      (Case f a TopLevel) -- The sealed case
   | Let (Let f a)
   | PrimOp PrimOp (Fwd (f a))
 
@@ -94,6 +105,18 @@ var  = injSyntax . Var
 
 app :: (HasSyntax f) => f a -> f a -> f a
 app l r = injSyntax (App l r)
+
+proj :: (HasSyntax f) => f a -> Label -> f a
+proj e lbl = injSyntax (Proj e lbl)
+
+primOp :: (HasSyntax f) => PrimOp -> Fwd (f a) -> f a
+primOp pop args = injSyntax (PrimOp pop args)
+
+case_ :: (HasSyntax f) => f a -> Case f a TopLevel -> f a
+case_ a b = injSyntax (Case a b)
+
+let_ :: (HasSyntax f) => Let f a -> f a
+let_ l = injSyntax (Let l)
 
 type Type = Exp
 

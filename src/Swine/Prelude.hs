@@ -27,7 +27,8 @@ import           Data.Functor.Identity as X (Identity(..), runIdentity)
 import           Debug.Trace as X (trace, traceM)
 import           Control.Monad as X (void, replicateM)
 import           Control.Monad.IO.Class as X (liftIO)
-import           Control.Monad.Reader as X (ReaderT, withReaderT)
+import           Control.Monad.Reader as X (ReaderT, withReaderT, ask)
+import           Control.Monad.Trans as X (lift)
 
 import           Swine.LookupList as X (LookupList)
 import           Swine.List as X

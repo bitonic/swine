@@ -7,6 +7,7 @@ import           Swine.Binder
 -- Removing suspensions
 -- --------------------------------------------------------------------
 
+-- TODO make it turn into `let` instead!
 removeSusp :: Exp a -> Syntax Exp a
 removeSusp = \case
   Syntax e -> e
@@ -20,11 +21,11 @@ removeSusp = \case
       PrimType pty -> PrimType pty
       Lam ty pat body -> suspPattern env pat (\env' pat' -> Lam (susp env ty) pat' (susp env' body))
       Record flds -> Record (map (susp env) flds)
-      Variant lbl e -> Variant lbl (susp env e)
+      Variant (MkVariant lbl e hid) -> Variant (MkVariant lbl (susp env e) hid)
       Prim p -> Prim p
     App fun arg -> App (susp env fun) (susp env arg)
     Proj e lbl -> Proj (susp env e) lbl
-    Case e case_ args -> Case (susp env e) case_ (map (suspCaseAlt env) args)
+    Case e case_ -> Case (susp env e) (suspCase env case_)
     PrimOp pop args -> PrimOp pop (map (susp env) args)
     Let let_ -> Let (suspLet env let_)
 
@@ -44,7 +45,8 @@ suspPattern ::
 suspPattern env pat0 cont = case pat0 of
   PatDefault b -> cont (envAbs b env) (PatDefault b)
   PatPrim p -> cont env (PatPrim p)
-  PatVariant lbl pat -> suspPattern env pat (\env' pat' -> cont env' (PatVariant lbl pat'))
+  PatVariant (MkPatVariant lbl pat impl) ->
+    suspPattern env pat (\env' pat' -> cont env' (PatVariant (MkPatVariant lbl pat' impl)))
   PatRecord patRec -> suspPatRecord env patRec (\env' patRec' -> cont env' (PatRecord patRec'))
   PatTyped pat ty -> suspPattern env pat (\env' pat' -> cont env' (PatTyped pat' (susp env ty)))
 
@@ -73,6 +75,12 @@ suspLetArgs env largs0 cont = case largs0 of
     suspPattern env pat $ \env' pat' ->
     suspLetArgs env' largs $ \env'' largs' ->
     cont env'' (LetArgsCons (susp env ty) pat' largs')
+
+suspCase ::
+     Env from to -> Case Exp from a -> Case Exp to a
+suspCase env = \case
+  CaseNil alts -> CaseNil alts
+  CaseCons arg cs -> CaseCons (susp env arg) (suspCase env cs)
 
 -- Strengthening
 -- --------------------------------------------------------------------
