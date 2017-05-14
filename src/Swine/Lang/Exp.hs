@@ -34,36 +34,36 @@ data Canonical f a
   | RecordType (Telescope f a)
   | VariantType (LookupList Label (f a))
   | PrimType PrimType
-  | forall to. Lam (f a) (Pattern f a to) (f to)
+  | forall to. Lam (f a) (Pattern 'True f a to) (f to)
   | Record (LookupList Label (f a))
   | Variant (Variant f a)
   | Prim Prim
 
-data PatRecord f from to where
-  PatRecordNil :: PatRecord f a a
-  PatRecordCons :: Label -> Pattern f a b -> PatRecord f b c -> PatRecord f a c
+data PatRecord irr f from to where
+  PatRecordNil :: PatRecord irr f a a
+  PatRecordCons :: Label -> Pattern irr f a b -> PatRecord irr f b c -> PatRecord irr f a c
 
-data PatVariant f from to = MkPatVariant
+data PatVariant irr f from to = MkPatVariant
   { patVarLabel :: Label
-  , patVarPattern :: Pattern f from to
+  , patVarPattern :: Pattern irr f from to
   , patVarImplicit :: Bool
   }
 
-data Pattern f from to where
-  PatDefault :: Binder -> Pattern f from (Var from)
-  PatTyped :: Pattern f from to -> f from -> Pattern f from to
-  PatPrim :: Prim -> Pattern f from from
-  PatVariant :: PatVariant f from to -> Pattern f from to
-  PatRecord :: PatRecord f from to -> Pattern f from to
+data Pattern (irr :: Bool) f from to where
+  PatDefault :: Binder -> Pattern irr f from (Var from)
+  PatTyped :: Pattern irr f from to -> f from -> Pattern irr f from to
+  PatPrim :: Prim -> Pattern 'False f from from
+  PatVariant :: PatVariant irr f from to -> Pattern 'False f from to
+  PatRecord :: PatRecord irr f from to -> Pattern irr f from to
 
 data CaseAlt f from = forall to. CaseAlt
-  { caseAltPat :: Pattern f from to
+  { caseAltPat :: Pattern 'False f from to
   , caseAltBody :: f to
   }
 
 data LetArgs f from to where
   LetArgsNil :: LetArgs f a a
-  LetArgsCons :: Type a -> Pattern f a b -> LetArgs f b c -> LetArgs f a c
+  LetArgsCons :: f a -> Pattern 'True f a b -> LetArgs f b c -> LetArgs f a c
 
 data Let f from = forall to. MkLet
   { letName :: Binder

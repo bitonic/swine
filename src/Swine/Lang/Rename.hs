@@ -110,7 +110,7 @@ renameExp = \case
   S.Axiom{} -> error "TODO axiom in rename"
   S.Coe{} -> error "TODO coe in rename"
 
-renamePat :: S.Pattern -> (forall to. Pattern NoSusps from to -> RenameM to a) -> RenameM from a
+renamePat :: S.Pattern irr -> (forall to. Pattern irr NoSusps from to -> RenameM to a) -> RenameM from a
 renamePat pat00 cont = case pat00 of
   S.PatBinder b -> withReaderT (RenameEnvCons (binderToSome b)) (cont (PatDefault b))
   S.PatTyped pat0 ty0 -> do
@@ -122,10 +122,11 @@ renamePat pat00 cont = case pat00 of
     cont (PatVariant (MkPatVariant lbl (PatRecord PatRecordNil) True))
   S.PatRecord rec0 ->
     renamePatRecord (LL.toFwd rec0) (\rec -> cont (PatRecord rec))
+  S.PatPrim p -> cont (PatPrim p)
 
 renamePatRecord ::
-     Fwd (Pair Label S.RecordFieldPattern)
-  -> (forall to. PatRecord NoSusps from to -> RenameM to a)
+     Fwd (Pair Label (S.RecordFieldPattern irr))
+  -> (forall to. PatRecord irr NoSusps from to -> RenameM to a)
   -> RenameM from a
 renamePatRecord flds0 cont = case flds0 of
   FwdNil -> cont PatRecordNil
@@ -143,7 +144,9 @@ renamePatRecord flds0 cont = case flds0 of
       renamePatRecord flds $ \flds' ->
         cont (PatRecordCons lbl (PatTyped (PatDefault (Bind lbl)) ty) flds')
 
-renameLetArgs :: Fwd S.Pattern -> (forall to. LetArgs NoSusps from to -> RenameM to a) -> RenameM from a
+renameLetArgs ::
+     Fwd (S.Pattern 'True)
+  -> (forall to. LetArgs NoSusps from to -> RenameM to a) -> RenameM from a
 renameLetArgs pats0 cont = case pats0 of
   FwdNil -> cont LetArgsNil
   pat :< pats -> do
@@ -152,7 +155,7 @@ renameLetArgs pats0 cont = case pats0 of
       renameLetArgs pats $ \pats' ->
         cont (LetArgsCons ty pat' pats')
 
-renameCaseAlt :: Pair S.Pattern S.Exp -> RenameM a (CaseAlt NoSusps a)
+renameCaseAlt :: Pair (S.Pattern 'False) S.Exp -> RenameM a (CaseAlt NoSusps a)
 renameCaseAlt (Pair pat0 e0) =
   renamePat pat0 $ \pat -> do
     e <- renameExp e0

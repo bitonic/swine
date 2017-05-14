@@ -29,6 +29,7 @@ import           Control.Monad as X (void, replicateM)
 import           Control.Monad.IO.Class as X (liftIO)
 import           Control.Monad.Reader as X (ReaderT, withReaderT, ask)
 import           Control.Monad.Trans as X (lift)
+import           Data.Function as X (fix)
 
 import           Swine.LookupList as X (LookupList)
 import           Swine.List as X

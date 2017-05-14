@@ -8,15 +8,16 @@ type Var = Text
 
 type Type = Exp
 
-data RecordFieldPattern
-  = RFPNormal Pattern
+data RecordFieldPattern irr
+  = RFPNormal (Pattern irr)
   | RFPPun (Option Type)
 
-data Pattern
-  = PatBinder Binder
-  | PatTyped Pattern Type
-  | PatVariant Label (Option Pattern)
-  | PatRecord (LookupList Label RecordFieldPattern)
+data Pattern (irr :: Bool) where
+  PatBinder :: Binder -> Pattern irr
+  PatTyped :: Pattern irr -> Type -> Pattern irr
+  PatVariant :: Label -> Option (Pattern irr) -> Pattern 'False
+  PatRecord :: LookupList Label (RecordFieldPattern irr) -> Pattern irr
+  PatPrim :: Prim -> Pattern 'False
 
 data Prop
   = PropEmpty
@@ -34,7 +35,7 @@ data Exp
   | PrimType PrimType
   | PropType Prop
   -- Canonical values
-  | Lam Pattern Exp
+  | Lam (Pattern 'True) Exp
   | Record (LookupList Label Exp)
   | Variant Label (Option Exp)
   | Prim Prim
@@ -46,10 +47,10 @@ data Exp
   -- TODO Add dependent pattern matching
   | Case
       Exp -- The scrutinized
-      (Fwd (Pair Pattern Exp))
+      (Fwd (Pair (Pattern 'False) Exp))
   | Let
       Binder -- Name of the bound thing
-      (Fwd Pattern) -- Parameters to the bound thing
+      (Fwd (Pattern 'True)) -- Parameters to the bound thing
       (Option Type) -- Return type
       Exp -- Body
       Exp -- Rest

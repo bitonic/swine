@@ -139,27 +139,16 @@ parseLam = (do
   go) <?> "lambda"
   where
     go = do
-      pat <- parsePattern
+      pat <- fix parseIrrPattern
       body <- asum
         [ swineReserve "->" >> parseExp
         , go
         ]
       return (Lam pat body)
 
-parsePattern :: (SwineParsing m) => m Pattern
-parsePattern = (asum
+parseIrrPattern :: (SwineParsing m) => m (Pattern irr) -> m (Pattern irr)
+parseIrrPattern parsePat = (asum
   [ PatBinder <$> parseBinder
-  , do
-      symbolic '['
-      lbl <- swineIdent
-      asum
-        [ symbolic ']' >> return (PatVariant lbl None)
-        , do
-            symbolic '='
-            pat <- parsePattern
-            symbolic ']'
-            return (PatVariant lbl (Some pat))
-        ]
   , do
       symbolic '{'
       let go = asum
@@ -177,7 +166,7 @@ parsePattern = (asum
                       ((lbl, RFPPun (Some ty)) :) <$> go
                   , do
                       symbolic '='
-                      pat <- parsePattern
+                      pat <- parsePat
                       symbolic ';'
                       ((lbl, RFPNormal pat) :) <$> go
                   ]
@@ -185,11 +174,28 @@ parsePattern = (asum
       PatRecord <$> (parseLookupList =<< go)
   , do
       symbolic '('
-      pat <- parsePattern
+      pat <- parsePat
       symbolic ':'
       ty <- parseExp
       symbolic ')'
       return (PatTyped pat ty)
+  ]) <?> "irrefutable pattern"
+
+-- TODO prim pattern
+parsePattern :: (SwineParsing m) => m (Pattern 'False)
+parsePattern = (asum
+  [ parseIrrPattern parsePattern
+  , do
+      symbolic '['
+      lbl <- swineIdent
+      asum
+        [ symbolic ']' >> return (PatVariant lbl None)
+        , do
+            symbolic '='
+            pat <- parsePattern
+            symbolic ']'
+            return (PatVariant lbl (Some pat))
+        ]
   ]) <?> "pattern"
 
 parseBinder :: (SwineParsing m) => m Binder
@@ -239,7 +245,7 @@ parseLet :: (SwineParsing m) => m Exp
 parseLet = (do
   swineReserve "let"
   n <- parseBinder
-  pars <- listToFwd <$> many parsePattern
+  pars <- listToFwd <$> many (fix parseIrrPattern)
   retTy <- asum
     [ do
         symbolic ':'
