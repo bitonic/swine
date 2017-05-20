@@ -13,7 +13,8 @@ data Var a
   deriving (Functor, Foldable, Traversable, Eq, Show, Generic)
 instance (Hashable a) => Hashable (Var a)
 
-type IsVar a = (Eq a, Hashable a)
+class (Eq a, Hashable a) => IsVar a where
+  topLevelWeaken :: Weaken TopLevel a
 
 -- Expressions
 -- --------------------------------------------------------------------
@@ -71,12 +72,12 @@ data Let f from = forall to. MkLet
   , letRetType :: f to
   , letRetTypeHidden :: Bool
   , letBody :: f to
-  , letRest :: f (Var to)
+  , letRest :: f (Var from)
   }
 
 data Case f from to where
   CaseNil :: Fwd (CaseAlt f to) -> Case f from to
-  CaseCons :: f from -> Case f from (Var to) -> Case f from to
+  CaseCons :: Binder -> f from -> Case f from (Var to) -> Case f from to
 
 data Syntax f a
   = Canonical (Canonical f a)
@@ -163,13 +164,32 @@ data Elim a
       (Bwd Prim) -- The evaluated arguments
       (Fwd (Exp a)) -- The yet-to-be-evaluated arguments
   | ElimProj Label
-  | ElimCase
-      (Env TopLevel a)
-      (Fwd (CaseAlt Exp a))
+
+data NeutralHead a
+  = NHVar a
+  | NHCase (Exp a) (Case Exp a TopLevel)
+  -- ^ We cannot store the case as an eliminator
+  -- because we might be stuck on a case
+  -- because of some nested pattern.
 
 data Eval a
   = EvalCanonical (Canonical Exp a)
-  | EvalNeutral a (Bwd (Elim a))
+  | EvalNeutral (NeutralHead a) (Bwd (Elim a))
+
+evalExp :: Eval a -> Exp a
+evalExp = \case
+  EvalCanonical c -> canonical c
+  EvalNeutral nh els -> foldl' appElim (nhExp nh) els
+    where
+      nhExp = \case
+        NHVar v -> var v
+        NHCase e cs -> case_ e cs
+
+      appElim e = \case
+        ElimApp e' -> app e e'
+        ElimPrimOp pop evald unevald ->
+          primOp pop (bwdReverse (map (canonical . Prim) evald) <> (e :< unevald))
+        ElimProj lbl -> proj e lbl
 
 -- Env toolkit
 -- --------------------------------------------------------------------
@@ -195,6 +215,9 @@ envLookup env0 v = case evalEnv env0 of
 
 envAbs :: Binder -> Env from to -> Env (Var from) (Var to)
 envAbs v env = envCons v (var (B (binderVar v))) (EnvWeaken env (WeakenSucc WeakenZero))
+
+envWeaken :: Env from to -> Env from (Var to)
+envWeaken env = EnvWeaken env (WeakenSucc WeakenZero)
 
 envComp :: Env a b -> Env b c -> Env a c
 envComp = EnvComp

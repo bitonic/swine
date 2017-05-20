@@ -68,7 +68,7 @@ suspPatRecord env pat0 cont = case pat0 of
 
 suspLet :: Env a b -> Let Exp a -> Let Exp b
 suspLet env (MkLet b args retTy retTyHidden body rest) = suspLetArgs env args $ \env' args' ->
-  MkLet b args' (susp env' retTy) retTyHidden (susp env' body) (susp (envAbs b env') rest)
+  MkLet b args' (susp env' retTy) retTyHidden (susp env' body) (susp (envAbs b env) rest)
 
 suspLetArgs ::
      Env from from' -> LetArgs Exp from to
@@ -85,7 +85,7 @@ suspCase ::
      Env from to -> Case Exp from a -> Case Exp to a
 suspCase env = \case
   CaseNil alts -> CaseNil alts
-  CaseCons arg cs -> CaseCons (susp env arg) (suspCase env cs)
+  CaseCons b arg cs -> CaseCons b (susp env arg) (suspCase env cs)
 
 removeAllSusps :: Exp a -> NoSusps a
 removeAllSusps = NoSusps . hoistSyntax removeAllSusps . removeSusp

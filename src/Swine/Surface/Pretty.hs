@@ -21,7 +21,7 @@ prettyBinder = \case
   Bind n -> text n
   Ignore n -> "_" <> text n
 
-prettyTypedPattern :: Pattern -> Option Type -> Doc
+prettyTypedPattern :: Pattern irr -> Option Type -> Doc
 prettyTypedPattern pat = \case
   None -> prettyPattern pat
   Some ty -> parens (prettyPattern pat <+> ":" <+> prettyExp PosNormal ty)
@@ -149,7 +149,7 @@ prettyApp pos = parensIfArg pos . go []
       App fun arg -> go (arg : prevArgs) fun
       e -> hang (vsep (prettyExp PosArg e : map (prettyExp PosArg) prevArgs))
 
-prettyPattern :: Pattern -> Doc
+prettyPattern :: Pattern irr -> Doc
 prettyPattern = \case
   PatBinder b -> prettyBinder b
   PatVariant lbl mbPat -> case mbPat of
@@ -170,6 +170,7 @@ prettyPattern = \case
           RFPPun (Some ty) -> text lbl <> ":" <+> prettyExp PosNormal ty <> ";"))) <##>
       "}"
   PatTyped pat ty -> parens (prettyPattern pat <+> ":" <+> prettyExp PosNormal ty)
+  PatPrim{} -> error "TODO prettyPattern PatPrim"
 
 prettyLam :: Position -> Exp -> Doc
 prettyLam pos = parensIfArg pos . go BwdNil

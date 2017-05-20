@@ -3,6 +3,7 @@ module Swine.LookupList where
 import           Prelude hiding (lookup)
 import qualified Data.Set as S
 import           Control.Monad (when)
+import           Data.Monoid ((<>))
 
 import           Swine.List
 import           Swine.Pair
@@ -45,3 +46,12 @@ toList (LookupList xs) = go xs
     go = \case
       FwdNil -> []
       Pair k v :< kvs -> (k, v) : go kvs
+
+insert :: (Ord a) => LookupList a b -> a -> b -> LookupList a b
+insert (LookupList ll) k v = LookupList (go BwdNil ll)
+  where
+    go prev = \case
+      FwdNil -> bwdReverse (prev :> Pair k v)
+      Pair k' v' :< kvs -> if k == k'
+        then bwdReverse prev <> (Pair k v :< kvs)
+        else go (prev :> Pair k' v') kvs

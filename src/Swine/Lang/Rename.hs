@@ -8,7 +8,7 @@ import qualified Swine.LookupList as LL
 
 data RenameEnv a where
   RenameEnvNil :: RenameEnv TopLevel
-  RenameEnvCons :: Option Text -> RenameEnv a -> RenameEnv (Var a)
+  RenameEnvCons :: Binder -> RenameEnv a -> RenameEnv (Var a)
 
 data RenameError
   = RENotInScope S.Var
@@ -24,8 +24,8 @@ lookupVar txt = do
     go :: RenameEnv a -> Maybe a
     go = \case
       RenameEnvNil -> Nothing
-      RenameEnvCons None env -> F <$> go env
-      RenameEnvCons (Some txt') env -> if txt == txt'
+      RenameEnvCons Ignore{} env -> F <$> go env
+      RenameEnvCons (Bind txt') env -> if txt == txt'
         then Just (B txt)
         else F <$> go env
   env <- ask
@@ -36,14 +36,10 @@ lookupVar txt = do
 sealCase :: Fwd (CaseAlt NoSusps a) -> RenameM a (Case NoSusps a TopLevel)
 sealCase alts = do
   let
-    toVar :: Option Text -> Text
-    toVar = \case
-      None -> "v"
-      Some txt -> txt
     go :: (to -> from) -> Case NoSusps from to -> RenameEnv to -> Case NoSusps from TopLevel
     go inj cs = \case
       RenameEnvNil -> cs
-      RenameEnvCons mbTxt env -> go (inj . F) (CaseCons (var (inj (B (toVar mbTxt)))) cs) env
+      RenameEnvCons mbTxt env -> go (inj . F) (CaseCons mbTxt (var (inj (B (binderVar mbTxt)))) cs) env
   env <- ask
   return (go id (CaseNil alts) env)
 
@@ -60,10 +56,7 @@ renameExp = \case
           None -> Ignore ""
           Some b -> b
     arg <- renameExp arg0
-    let mbTxt = case bind of
-          Bind b -> Some b
-          Ignore{} -> None
-    res <- withReaderT (RenameEnvCons mbTxt) (renameExp res0)
+    res <- withReaderT (RenameEnvCons bind) (renameExp res0)
     return (canonical (LamType bind arg res))
   S.RecordType recTy ->
     canonical . RecordType <$> renameTelescope (LL.toFwd recTy)
@@ -97,22 +90,20 @@ renameExp = \case
     alts <- for alts0 renameCaseAlt
     cs <- sealCase alts
     return (case_ e cs)
-  S.Let b pats0 retTy0 body0 rest0 -> renameLetArgs pats0 $ \largs -> do
-    retTy <- case retTy0 of
-      None -> var <$> topLevelVar Meta
-      Some retTy -> renameExp retTy
-    body <- renameExp body0
-    let (hid, mbTxt) = case b of
-          Bind b' -> (False, Some b')
-          Ignore{} -> (True, None)
-    rest <- withReaderT (RenameEnvCons mbTxt) (renameExp rest0)
-    return (let_ (MkLet b largs retTy hid body rest))
+  S.Let b pats0 retTy0 body0 rest0 -> do
+    rest <- withReaderT (RenameEnvCons b) (renameExp rest0)
+    renameLetArgs pats0 $ \largs -> do
+      (hid, retTy) <- case retTy0 of
+        None -> (True, ) <$> (var <$> topLevelVar Meta)
+        Some retTy -> (False, ) <$> renameExp retTy
+      body <- renameExp body0
+      return (let_ (MkLet b largs retTy hid body rest))
   S.Axiom{} -> error "TODO axiom in rename"
   S.Coe{} -> error "TODO coe in rename"
 
 renamePat :: S.Pattern irr -> (forall to. Pattern irr NoSusps from to -> RenameM to a) -> RenameM from a
 renamePat pat00 cont = case pat00 of
-  S.PatBinder b -> withReaderT (RenameEnvCons (binderToSome b)) (cont (PatDefault b))
+  S.PatBinder b -> withReaderT (RenameEnvCons b) (cont (PatDefault b))
   S.PatTyped pat0 ty0 -> do
     ty <- renameExp ty0
     renamePat pat0 (\pat -> cont (PatTyped pat ty))
@@ -135,12 +126,12 @@ renamePatRecord flds0 cont = case flds0 of
     renamePatRecord flds $ \flds' ->
     cont (PatRecordCons lbl pat flds')
   Pair lbl (S.RFPPun None) :< flds ->
-    withReaderT (RenameEnvCons (Some lbl)) $
+    withReaderT (RenameEnvCons (Bind lbl)) $
       renamePatRecord flds $ \flds' ->
         cont (PatRecordCons lbl (PatDefault (Bind lbl)) flds')
   Pair lbl (S.RFPPun (Some ty0)) :< flds -> do
     ty <- renameExp ty0
-    withReaderT (RenameEnvCons (Some lbl)) $
+    withReaderT (RenameEnvCons (Bind lbl)) $
       renamePatRecord flds $ \flds' ->
         cont (PatRecordCons lbl (PatTyped (PatDefault (Bind lbl)) ty) flds')
 
@@ -166,6 +157,6 @@ renameTelescope = \case
   FwdNil -> return TelescopeNil
   Pair lbl ty0 :< flds0 -> do
     ty <- renameExp ty0
-    withReaderT (RenameEnvCons (Some lbl)) $ do
+    withReaderT (RenameEnvCons (Bind lbl)) $ do
       flds <- renameTelescope flds0
       return (TelescopeCons lbl ty flds)

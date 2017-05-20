@@ -72,4 +72,5 @@ library
     DeriveGeneric
     GeneralizedNewtypeDeriving
     EmptyCase
+    TupleSections
   ghc-options: -Wall -funbox-small-strict-fields

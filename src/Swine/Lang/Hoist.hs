@@ -48,7 +48,7 @@ hoistPatRecord f = \case
 hoistCase :: (forall a. f a -> g a) -> Case f from to -> Case g from to
 hoistCase f = \case
   CaseNil alts -> CaseNil (map (hoistCaseAlt f) alts)
-  CaseCons arg cs -> CaseCons (f arg) (hoistCase f cs)
+  CaseCons b arg cs -> CaseCons b (f arg) (hoistCase f cs)
 
 hoistCaseAlt :: (forall a. f a -> g a) -> CaseAlt f b -> CaseAlt g b
 hoistCaseAlt f (CaseAlt pat body) = CaseAlt (hoistPattern f pat) (f body)
