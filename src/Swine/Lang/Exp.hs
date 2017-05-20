@@ -147,12 +147,6 @@ data Env from to where
   EnvNormal :: NormalEnv from to -> Env from to
   EnvComp :: Env a b -> Env b c -> Env a c
   -- ^ Composes two environments together
-  EnvWeaken :: Env a b -> Weaken b (Var c) -> Env a (Var c)
-  -- ^
-  -- Weakens the expression after applying the given environment.
-  --
-  -- We want at least one weakening here, otherwise this should
-  -- disappear.
 
 -- Eval
 -- --------------------------------------------------------------------
@@ -214,10 +208,10 @@ envLookup env0 v = case evalEnv env0 of
       WeakenSucc wk -> F (goWeaken wk v')
 
 envAbs :: Binder -> Env from to -> Env (Var from) (Var to)
-envAbs v env = envCons v (var (B (binderVar v))) (EnvWeaken env (WeakenSucc WeakenZero))
+envAbs v env = envCons v (var (B (binderVar v))) (envWeaken env)
 
 envWeaken :: Env from to -> Env from (Var to)
-envWeaken env = EnvWeaken env (WeakenSucc WeakenZero)
+envWeaken env = envComp env (EnvNormal (EnvNil (WeakenSucc WeakenZero)))
 
 envComp :: Env a b -> Env b c -> Env a c
 envComp = EnvComp
@@ -226,26 +220,10 @@ evalEnv :: Env from to -> NormalEnv from to
 evalEnv = \case
   EnvNormal env -> env
   EnvComp env1 env2 -> goComp (evalEnv env1) env2
-  EnvWeaken env wk -> goWeaken env wk
   where
     goComp :: NormalEnv a b -> Env b c -> NormalEnv a c
     goComp (EnvNil wk) env2 = goCompWeaken wk env2
     goComp (EnvCons v1 e1 env1) env2 = EnvCons v1 (susp env2 e1) (EnvComp env1 env2)
-
-    goWeaken :: Env a b -> Weaken b c -> NormalEnv a c
-    goWeaken env0 = \case
-      WeakenZero -> evalEnv env0
-      wk@(WeakenSucc _) -> case env0 of
-        EnvNormal env -> goWeakenNormal env wk
-        EnvComp env1 env2 -> goComp (evalEnv env1) (EnvWeaken env2 wk)
-        EnvWeaken env wk' -> goWeaken env (compWeaken wk' wk)
-
-    goWeakenNormal :: NormalEnv a b -> Weaken b c -> NormalEnv a c
-    goWeakenNormal env0 wk = case env0 of
-      EnvNil wk' -> EnvNil (compWeaken wk' wk)
-      EnvCons v e env -> EnvCons v (susp (EnvNormal (EnvNil wk)) e) $ case wk of
-        WeakenZero -> env
-        WeakenSucc _ -> EnvWeaken env wk
 
     goCompWeaken :: Weaken a b -> Env b c -> NormalEnv a c
     goCompWeaken wk = \case
@@ -254,7 +232,6 @@ evalEnv = \case
         WeakenZero -> EnvCons v e env
         WeakenSucc wk' -> goCompWeaken wk' env
       EnvComp env1 env2 -> goComp (goCompWeaken wk env1) env2
-      EnvWeaken env wk' -> goWeakenNormal (goCompWeaken wk env) wk' -- TODO can we do this more lazily?
 
     compWeaken :: Weaken a b -> Weaken b c -> Weaken a c
     compWeaken wk1 WeakenZero = wk1
